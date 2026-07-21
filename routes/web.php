@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\PharmacyInventoryController;
+use App\Http\Controllers\TransferController;
 use Illuminate\Support\Facades\Route;
 
 // Include this file from routes/web.php, e.g.:
@@ -23,4 +24,10 @@ Route::middleware(['web', ])->prefix('/')->name('pharmacy.')->group(function () 
     Route::delete('/wastage/{wastageRecord}', [PharmacyInventoryController::class, 'destroyWastage'])->name('wastage.destroy');
 
     Route::put('/settings', [PharmacyInventoryController::class, 'updateSettings'])->name('settings.update');
+   
 });
+
+ Route::post('/pharmacy/transfers', [App\Http\Controllers\TransferController::class, 'store'])
+     ->name('pharmacy.transfers.store');
+
+    Route::get('/pharmacy/transfers/print', [TransferController::class, 'print']);

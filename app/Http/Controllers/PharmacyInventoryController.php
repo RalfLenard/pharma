@@ -6,6 +6,7 @@ use App\Models\Item;
 use App\Models\LabSetting;
 use App\Models\Transaction;
 use App\Models\WastageRecord;
+use App\Models\Transfer;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -25,6 +26,7 @@ class PharmacyInventoryController extends Controller
             'items' => Item::orderBy('name')->get(),
             'transactions' => Transaction::orderBy('date')->get(),
             'wastageRecords' => WastageRecord::orderBy('date')->get(),
+             'transfers' => Transfer::latest()->get(),
             'labSettings' => LabSetting::current(),
         ]);
     }

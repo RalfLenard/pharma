@@ -15,14 +15,26 @@ const props = defineProps({
 
 const fSec = ref('')
 const fFund = ref('')
+const fItem = ref('')
+
 const sections = computed(() => [...new Set(props.items.map((i) => i.sec).filter(Boolean))].sort())
+
+// Dynamic items list for dropdown (based on section + fund)
+const filteredItems = computed(() => {
+  return props.items
+    .filter((i) => !fSec.value || i.sec === fSec.value)
+    .filter((i) => !fFund.value || i.fund === fFund.value)
+    .sort((a, b) => a.name.localeCompare(b.name))
+})
 
 const rows = computed(() => {
   const k = props.curKey
   const prevKey = prevMonthKey(k)
+
   const list = props.items
     .filter((i) => !fSec.value || i.sec === fSec.value)
     .filter((i) => !fFund.value || i.fund === fFund.value)
+    .filter((i) => !fItem.value || i.id === fItem.value)
     .sort((a, b) => (a.sec || '').localeCompare(b.sec || '') || a.name.localeCompare(b.name))
 
   return list.map((i) => {
@@ -35,12 +47,19 @@ const rows = computed(() => {
       .filter((t) => { const d = parseLocalDate(t.date); return t.item_id === i.id && t.type === 'out' && monthKey(d.getFullYear(), d.getMonth()) === k && !(t.note && t.note.startsWith('[WASTAGE/')) })
       .reduce((s, t) => s + t.qty, 0)
     const endBal = Math.max(0, prevStock + thisMonth.in - consumed - itemWastage)
+
     const remarks = []
     if (endBal === 0) remarks.push('Out of stock')
     else if (endBal < i.min) remarks.push('Low stock')
     if (itemWastage > 0) remarks.push(`${itemWastage} wasted`)
+
     return {
-      item: i, prevStock, received: thisMonth.in, consumed, wastage: itemWastage, endBal,
+      item: i,
+      prevStock,
+      received: thisMonth.in,
+      consumed,
+      wastage: itemWastage,
+      endBal,
       remarks: remarks.join(', '),
     }
   })
@@ -52,6 +71,12 @@ const kpis = computed(() => ({
   totalWastage: rows.value.reduce((s, r) => s + r.wastage, 0),
   totalEndBal: rows.value.reduce((s, r) => s + r.endBal, 0),
 }))
+
+function clearFilters() {
+  fSec.value = ''
+  fFund.value = ''
+  fItem.value = ''
+}
 
 function exportExcel() {
   const mLabel = monthLabel(props.curYear, props.curMonth)
@@ -80,17 +105,33 @@ function exportExcel() {
         <div class="text-white font-semibold text-sm">Monthly Inventory Consumption Report</div>
         <div class="text-blue-200 text-[11px] mt-1">Beginning balance · Received · Consumed · Wastage · Ending balance</div>
       </div>
+
       <div class="flex gap-2 items-center flex-wrap">
+        <!-- Item Name Dropdown -->
+        <select v-model="fItem" class="tbl-input text-xs w-64">
+          <option value="">All Items</option>
+          <option
+            v-for="item in filteredItems"
+            :key="item.id"
+            :value="item.id"
+          >
+            {{ item.name }}
+          </option>
+        </select>
+
         <select v-model="fSec" class="tbl-input text-xs">
-          <option value="">All sections</option>
+          <option value="">All Sections</option>
           <option v-for="s in sections" :key="s" :value="s">{{ s }}</option>
         </select>
+
         <select v-model="fFund" class="tbl-input text-xs">
-          <option value="">All funds</option>
+          <option value="">All Funds</option>
           <option v-for="f in FUND_SOURCES" :key="f" :value="f">{{ f }}</option>
         </select>
+
         <button class="btn" style="background:rgba(255,255,255,.15);color:#fff;" onclick="window.print()">Print / PDF</button>
         <button class="btn" style="background:#16a34a;color:#fff;" @click="exportExcel">Export Excel</button>
+        <button class="btn" style="background:#ef4444;color:#fff;" @click="clearFilters">Clear Filters</button>
       </div>
     </div>
 

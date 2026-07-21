@@ -10,7 +10,7 @@ import TxnLogTab from '@/components/Pharmacy/Txnlogtab.vue'
 import MonthlyReportTab from '@/components/Pharmacy/Monthlyreporttab.vue'
 import WastageTab from '@/components/Pharmacy/Wastagetab.vue'
 import PrintTab from '@/components/Pharmacy/Printtab.vue'
-import TransferTab from '@/components/Pharmacy/Transfertab.vue'
+import Transfertab from '@/components/Pharmacy/Transfertab.vue'
 
 import ItemModal from '@/components/Pharmacy/modals/Itemmodal.vue'
 import TxnModal from '@/components/Pharmacy/modals/Txnmodal.vue'
@@ -23,7 +23,6 @@ const props = defineProps({
   items: { type: Array, required: true },
   transactions: { type: Array, required: true },
   wastageRecords: { type: Array, required: true },
-  transfers: { type: Array, default: () => [] },
   labSettings: { type: Object, required: true },
 })
 
@@ -34,7 +33,6 @@ const tabs = [
   { key: 'log', label: 'Txn Log' },
   { key: 'monthly', label: 'Monthly Report' },
   { key: 'wastage', label: 'Wastage' },
-  { key: 'transfers', label: 'Transfers' },
   { key: 'print', label: 'Print' },
 ]
 const activeTab = ref('inventory')
@@ -539,7 +537,6 @@ function openTransferModal(item) {
         <TxnLogTab v-else-if="activeTab === 'log'" :items="items" :transactions="transactions" @stock="openTxn" />
         <MonthlyReportTab v-else-if="activeTab === 'monthly'" :items="items" :transactions="transactions" :wastage-records="wastageRecords" :cur-key="curKey" :cur-year="curYear" :cur-month="curMonth" />
         <WastageTab v-else-if="activeTab === 'wastage'" :items="items" :wastage-records="wastageRecords" @add="wastageModal.show = true" />
-       <TransferTab v-else-if="activeTab === 'transfers'" :items="items" :transfers="transfers" />
         <PrintTab v-else-if="activeTab === 'print'" :items="items" :transactions="transactions" :cur-key="curKey" :lab-settings="labSettings" />
       </div>
     </div>
@@ -551,12 +548,13 @@ function openTransferModal(item) {
     <SettingsModal v-model:show="settingsModal.show" :lab-settings="labSettings" />
     <ArchiveModal v-model:show="archiveModal.show" :item="archiveModal.item"  :items="items"/>
 
-    <!-- Transfer Modal -->
-    <TransferModal 
-      v-model:show="transferModal.show" 
-      :item="transferModal.item"
-      :current-stock="transferModal.item ? itemStock(transferModal.item) : 0"
-    />
+    <!-- Add this modal -->
+    <!-- Replace the current TransferModal -->
+<TransferModal 
+  v-model:show="transferModal.show" 
+  :item="transferModal.item"
+  :current-stock="transferModal.item ? itemStock(transferModal.item) : 0"
+/>
   </div>
 </template>
 
