@@ -35,13 +35,16 @@ const m = props.curKey % 100
       <table class="w-full border-collapse">
         <thead>
           <tr class="border-b-2 border-slate-800">
-            <th class="th">Supply Item</th><th class="th">Lot</th><th class="th">Expiry</th>
+            <th class="th">Supply Item</th>
+            <th class="th">Fund Source</th>
+            <th class="th">Lot</th><th class="th">Expiry</th>
             <th class="th text-right">Stock In</th><th class="th text-right">Stock Out</th><th class="th text-right">Current</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="r in rows" :key="r.item.id" class="border-b border-slate-200">
             <td class="td">{{ r.item.name }}</td>
+            <td class="td">{{ r.item.fund }}</td>
             <td class="td">{{ r.item.lot || '—' }}</td>
             <td class="td">{{ fmtDate(r.item.exp) }}</td>
             <td class="td text-right">{{ r.ms.in }}</td>

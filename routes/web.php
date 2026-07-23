@@ -3,6 +3,7 @@
 use App\Http\Controllers\PharmacyInventoryController;
 use App\Http\Controllers\TransferController;
 use Illuminate\Support\Facades\Route;
+use Kreait\Laravel\Firebase\Facades\Firebase;
 
 // Include this file from routes/web.php, e.g.:
 //   require __DIR__.'/pharmacy.php';
@@ -31,3 +32,13 @@ Route::middleware(['web', ])->prefix('/')->name('pharmacy.')->group(function () 
      ->name('pharmacy.transfers.store');
 
     Route::get('/pharmacy/transfers/print', [TransferController::class, 'print']);
+
+
+
+Route::get('/firebase-test', function () {
+    $database = Firebase::database();
+
+    return response()->json([
+        'message' => 'Firebase Connected Successfully!',
+    ]);
+});
