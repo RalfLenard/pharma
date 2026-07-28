@@ -1,35 +1,108 @@
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, watch } from 'vue'
+import axios from 'axios'
 import PrintTransferModal from '@/components/Pharmacy/modals/Printtransfermodal.vue'
+import EditTransferModal from '@/components/Pharmacy/modals/EditTransferModal.vue'
 
 const props = defineProps({
   transfers: { type: Array, default: () => [] },
   items: { type: Array, required: true }
 })
 
+const emit = defineEmits(['edit', 'delete', 'refresh'])
+
+const activeTab = ref('transfers') // 'transfers' | 'history'
+
 const searchQuery = ref('')
 const showPrintModal = ref(false)
+const showEditModal = ref(false)
+const editingTransfer = ref(null)
 
-const printInfo = ref({
-  reference_id: '',
-  date_from: '',
-  date_to: '',
-})
+// Local copy of transfers to allow immediate UI updates
+const localTransfers = ref([...props.transfers])
+
+watch(() => props.transfers, (newVal) => {
+  localTransfers.value = [...(newVal || [])]
+}, { deep: true, immediate: true })
+
+// --- Print History state ---
+const printHistory = ref([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyPage = ref(1)
+const historyLastPage = ref(1)
+const reprintingId = ref(null)
+
+async function loadPrintHistory(page = 1) {
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const { data } = await axios.get('/print-history', { params: { page } })
+    printHistory.value = data.data || []
+    historyPage.value = data.current_page || 1
+    historyLastPage.value = data.last_page || 1
+  } catch (err) {
+    historyError.value = err.response?.data?.message || 'Failed to load print history.'
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+function switchTab(tab) {
+  activeTab.value = tab
+  if (tab === 'history' && printHistory.value.length === 0) {
+    loadPrintHistory(1)
+  }
+}
+
+async function reprint(record) {
+  reprintingId.value = record.id
+  try {
+    const response = await axios.get(`/print-history/${record.reference_id}/reprint`, {
+      responseType: 'blob',
+    })
+    const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
+    window.open(blobUrl, '_blank')
+    setTimeout(() => window.URL.revokeObjectURL(blobUrl), 60_000)
+  } catch (err) {
+    alert('Failed to reprint. The original data for this reference may no longer be available.')
+  } finally {
+    reprintingId.value = null
+  }
+}
+
+function formatHistoryDate(date) {
+  if (!date) return '—'
+  const d = new Date(date)
+  if (isNaN(d.getTime())) return String(date)
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) +
+    ' • ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatHistoryDateShort(date) {
+  if (!date) return '—'
+  const d = new Date(date)
+  if (isNaN(d.getTime())) return String(date)
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+// --- Transfer table logic ---
 
 function pick(obj, keys, fallback = '') {
   for (const k of keys) {
-    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k]
+    if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k]
   }
   return fallback
 }
 
 const enrichedTransfers = computed(() => {
-  return (props.transfers || []).map((t) => {
+  return (localTransfers.value || []).map((t) => {
     const itemId = pick(t, ['item_id', 'itemId', 'item'], null)
     const item = props.items.find((i) => Number(i.id) === Number(itemId))
     return {
       raw: t,
       id: pick(t, ['id'], Math.random()),
+      item_id: itemId,
       created_at: pick(t, ['created_at', 'createdAt', 'date', 'transfer_date'], null),
       reference_id: pick(t, ['reference_id', 'ref_id', 'reference', 'ref'], '—'),
       qty: Number(pick(t, ['qty', 'quantity', 'amount'], 0)),
@@ -53,24 +126,6 @@ const filteredTransfers = computed(() => {
   )
 })
 
-// Transfers within the selected print date range
-const printTransfers = computed(() => {
-  if (!printInfo.value.date_from || !printInfo.value.date_to) return []
-  const from = new Date(printInfo.value.date_from)
-  const to = new Date(printInfo.value.date_to)
-  to.setHours(23, 59, 59, 999)
-
-  return enrichedTransfers.value.filter((t) => {
-    if (!t.created_at) return false
-    const d = new Date(t.created_at)
-    return d >= from && d <= to
-  })
-})
-
-const printTotalQty = computed(() =>
-  printTransfers.value.reduce((sum, t) => sum + (t.qty || 0), 0)
-)
-
 function formatDate(date) {
   if (!date) return '—'
   const d = new Date(date)
@@ -80,31 +135,52 @@ function formatDate(date) {
   }) + ' • ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
 
-function formatDateShort(date) {
-  if (!date) return '—'
-  const d = new Date(date)
-  if (isNaN(d.getTime())) return String(date)
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+function handlePrinted() {
+  if (activeTab.value === 'history') {
+    loadPrintHistory(historyPage.value)
+  }
 }
 
-async function handlePrinted(payload) {
-  printInfo.value = payload
+function onEdit(transfer) {
+  editingTransfer.value = transfer.raw
+  showEditModal.value = true
+  emit('edit', transfer.raw)
+}
 
-  // Wait for the printable view to render with the new data, then open print dialog
-  await nextTick()
-  window.print()
+function onUpdated(updatedRecord) {
+  editingTransfer.value = null
+  if (updatedRecord && updatedRecord.id) {
+    const idx = localTransfers.value.findIndex(t => t.id === updatedRecord.id)
+    if (idx !== -1) {
+      localTransfers.value[idx] = { ...localTransfers.value[idx], ...updatedRecord }
+    }
+  }
+  emit('refresh')
+}
+
+async function onDelete(transfer) {
+  if (!confirm(`Delete transfer of ${transfer.qty} ${transfer.item_unit} — ${transfer.item_name}?`)) return
+
+  try {
+    await axios.delete(`/transfers/${transfer.id}`)
+    localTransfers.value = localTransfers.value.filter(t => t.id !== transfer.id)
+    emit('delete', transfer.raw)
+    emit('refresh')
+  } catch (err) {
+    alert(err.response?.data?.message || 'Failed to delete transfer.')
+  }
 }
 </script>
 
 <template>
   <div class="transfer-page">
-    <div class="page-header no-print">
+    <div class="page-header">
       <div>
         <h2>Item Transfers</h2>
         <p class="subtitle">{{ enrichedTransfers.length }} total transfers</p>
       </div>
       <div class="header-actions">
-        <div class="search-box">
+        <div class="search-box" v-if="activeTab === 'transfers'">
           <input 
             v-model="searchQuery" 
             type="text" 
@@ -118,76 +194,143 @@ async function handlePrinted(payload) {
       </div>
     </div>
 
-    <div v-if="!props.transfers.length" class="empty-state no-print">
-      <p>No transfers recorded yet.</p>
-      <small>Transfers made from the Transfer modal will appear here.</small>
+    <!-- Tabs -->
+    <div class="tabs">
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'transfers' }"
+        @click="switchTab('transfers')"
+      >
+        Transfers
+      </button>
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'history' }"
+        @click="switchTab('history')"
+      >
+        Print History
+      </button>
     </div>
 
-    <div v-else class="tbl-wrap no-print">
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Reference</th>
-            <th>Item</th>
-            <th class="num">Qty</th>
-            <th>Remarks</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="t in filteredTransfers" :key="t.id" class="transfer-row">
-            <td class="date">{{ formatDate(t.created_at) }}</td>
-            <td class="ref"><strong>{{ t.reference_id }}</strong></td>
-            <td class="item-name">{{ t.item_name }}</td>
-            <td class="qty num">{{ t.qty }} <span class="unit">{{ t.item_unit }}</span></td>
-            <td class="remarks">{{ t.remarks || '—' }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Printable summary, hidden on screen, shown only when printing -->
-    <div class="print-only">
-      <div class="print-header">
-        <h1>Item Transfer Report</h1>
-        <p v-if="printInfo.reference_id">Reference: <strong>{{ printInfo.reference_id }}</strong></p>
-        <p>Period: {{ formatDateShort(printInfo.date_from) }} — {{ formatDateShort(printInfo.date_to) }}</p>
+    <!-- Transfers Tab -->
+    <template v-if="activeTab === 'transfers'">
+      <div v-if="!enrichedTransfers.length" class="empty-state">
+        <p>No transfers recorded yet.</p>
+        <small>Transfers made from the Transfer modal will appear here.</small>
       </div>
 
-      <table class="print-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Reference</th>
-            <th>Item</th>
-            <th>Qty</th>
-            <th>Remarks</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="t in printTransfers" :key="'print-' + t.id">
-            <td>{{ formatDate(t.created_at) }}</td>
-            <td>{{ t.reference_id }}</td>
-            <td>{{ t.item_name }}</td>
-            <td>{{ t.qty }} {{ t.item_unit }}</td>
-            <td>{{ t.remarks || '—' }}</td>
-          </tr>
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colspan="3"><strong>Total</strong></td>
-            <td><strong>{{ printTotalQty }}</strong></td>
-            <td></td>
-          </tr>
-        </tfoot>
-      </table>
+      <div v-else class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Item</th>
+              <th class="num">Qty</th>
+              <th>Remarks</th>
+              <th class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="t in filteredTransfers" :key="t.id" class="transfer-row">
+              <td class="date">{{ formatDate(t.created_at) }}</td>
+              <td class="item-name">{{ t.item_name }}</td>
+              <td class="qty num">{{ t.qty }} <span class="unit">{{ t.item_unit }}</span></td>
+              <td class="remarks">{{ t.remarks || '—' }}</td>
+              <td class="actions-col">
+                <button class="btn-action btn-edit" @click="onEdit(t)" title="Edit transfer">
+                  ✏️ Edit
+                </button>
+                <button class="btn-action btn-delete" @click="onDelete(t)" title="Delete transfer">
+                  🗑️
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
 
-      <p v-if="!printTransfers.length" class="print-empty">No transfers found in this date range.</p>
-    </div>
+    <!-- Print History Tab -->
+    <template v-else>
+      <div v-if="historyLoading" class="empty-state">
+        <p>Loading print history…</p>
+      </div>
+
+      <div v-else-if="historyError" class="empty-state">
+        <p>{{ historyError }}</p>
+      </div>
+
+      <div v-else-if="!printHistory.length" class="empty-state">
+        <p>No prints recorded yet.</p>
+        <small>Reports generated from "Print Transfers" will appear here for reprinting.</small>
+      </div>
+
+      <div v-else class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Reference #</th>
+              <th>Period</th>
+              <th>Prepared By</th>
+              <th>Printed At</th>
+              <th class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="record in printHistory" :key="record.id">
+              <td class="ref"><strong>{{ record.reference_id }}</strong></td>
+              <td class="date">
+                {{ formatHistoryDateShort(record.date_from) }} — {{ formatHistoryDateShort(record.date_to) }}
+              </td>
+              <td>
+                {{ record.prepared_by }}
+                <span v-if="record.prepared_by_position" class="unit">({{ record.prepared_by_position }})</span>
+              </td>
+              <td class="date">{{ formatHistoryDate(record.printed_at) }}</td>
+              <td class="actions-col">
+                <button
+                  class="btn-action btn-edit"
+                  @click="reprint(record)"
+                  :disabled="reprintingId === record.id"
+                  title="Reprint this report"
+                >
+                  {{ reprintingId === record.id ? 'Preparing…' : '🖨️ Reprint' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="pagination" v-if="historyLastPage > 1">
+          <button
+            class="btn btn-cancel"
+            :disabled="historyPage <= 1"
+            @click="loadPrintHistory(historyPage - 1)"
+          >
+            Previous
+          </button>
+          <span class="page-info">Page {{ historyPage }} of {{ historyLastPage }}</span>
+          <button
+            class="btn btn-cancel"
+            :disabled="historyPage >= historyLastPage"
+            @click="loadPrintHistory(historyPage + 1)"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </template>
 
     <PrintTransferModal
       v-model:show="showPrintModal"
       @printed="handlePrinted"
+    />
+
+    <EditTransferModal
+      v-model:show="showEditModal"
+      :transfer="editingTransfer"
+      :items="items"
+      @updated="onUpdated"
     />
   </div>
 </template>
@@ -201,7 +344,7 @@ async function handlePrinted(payload) {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
   gap: 16px;
 }
@@ -253,6 +396,36 @@ async function handlePrinted(payload) {
   white-space: nowrap;
 }
 .btn-print:hover { background: #1e3a8a; }
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 20px;
+}
+
+.tab-btn {
+  padding: 10px 18px;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all 0.15s;
+}
+
+.tab-btn:hover {
+  color: #1e40af;
+}
+
+.tab-btn.active {
+  color: #1e40af;
+  border-bottom-color: #1e40af;
+}
 
 /* Empty State */
 .empty-state {
@@ -320,47 +493,63 @@ async function handlePrinted(payload) {
   text-overflow: ellipsis;
 }
 
-/* Print view is hidden on screen, only shown when printing */
-.print-only { display: none; }
-</style>
-
-<style>
-/* Global print rules (unscoped so they reliably apply to the whole page) */
-@media print {
-  .no-print { display: none !important; }
-  .print-only { display: block !important; }
-
-  .print-header {
-    text-align: center;
-    margin-bottom: 20px;
-  }
-  .print-header h1 {
-    margin: 0 0 6px 0;
-    font-size: 18px;
-  }
-  .print-header p {
-    margin: 2px 0;
-    font-size: 12px;
-  }
-
-  .print-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 11px;
-  }
-  .print-table th,
-  .print-table td {
-    border: 1px solid #333;
-    padding: 6px 8px;
-    text-align: left;
-  }
-  .print-table thead {
-    background: #eee;
-  }
-  .print-empty {
-    text-align: center;
-    color: #666;
-    margin-top: 20px;
-  }
+/* Actions column */
+.actions-col {
+  white-space: nowrap;
+  text-align: right;
 }
+
+.btn-action {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-left: 4px;
+  transition: background 0.15s;
+}
+
+.btn-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-edit {
+  color: #1e40af;
+}
+.btn-edit:hover { background: #eff6ff; }
+
+.btn-delete {
+  color: #dc2626;
+}
+.btn-delete:hover { background: #fef2f2; }
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.page-info {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid #cbd5e1;
+  background: white;
+  color: #334155;
+}
+.btn:hover:not(:disabled) { background: #f1f5f9; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, watch } from 'vue'
+import axios from 'axios'
 
 const props = defineProps({
   show: {
@@ -16,6 +17,7 @@ const preparedBy = ref('')
 const preparedByPosition = ref('')
 const remarks = ref('')
 const customRemarks = ref('')
+const submitting = ref(false)
 
 const remarkOptions = [
   'All',
@@ -36,6 +38,7 @@ const todayISO = () => {
 }
 
 const close = () => {
+  if (submitting.value) return
   emit('update:show', false)
 
   setTimeout(() => {
@@ -48,8 +51,7 @@ const close = () => {
   }, 300)
 }
 
-const submitPrint = () => {
-
+const submitPrint = async () => {
   if (
     !dateFrom.value ||
     !dateTo.value ||
@@ -75,29 +77,38 @@ const submitPrint = () => {
     ? customRemarks.value.trim()
     : remarks.value
 
-  const params = new URLSearchParams({
+  const payload = {
     date_from: dateFrom.value,
     date_to: dateTo.value,
     prepared_by: preparedBy.value,
     prepared_by_position: preparedByPosition.value,
-  })
-
-  // "All" means don't filter by destination at all
-  if (finalRemarks !== 'All') {
-    params.set('remarks', finalRemarks)
   }
 
-  window.open(`/pharmacy/transfers/print?${params.toString()}`, '_blank')
+  if (finalRemarks !== 'All') {
+    payload.remarks = finalRemarks
+  }
 
-  emit('printed', {
-    date_from: dateFrom.value,
-    date_to: dateTo.value,
-    prepared_by: preparedBy.value,
-    prepared_by_position: preparedByPosition.value,
-    remarks: finalRemarks,
-  })
+  submitting.value = true
+  try {
+    const { data } = await axios.post('/transfers/print', payload)
 
-  close()
+    window.open(`/print-history/${data.reference_id}/reprint`, '_blank')
+
+    emit('printed', {
+      reference_id: data.reference_id,
+      date_from: dateFrom.value,
+      date_to: dateTo.value,
+      prepared_by: preparedBy.value,
+      prepared_by_position: preparedByPosition.value,
+      remarks: finalRemarks,
+    })
+
+    close()
+  } catch (err) {
+    alert(err.response?.data?.message || 'Failed to generate the report. Please try again.')
+  } finally {
+    submitting.value = false
+  }
 }
 
 watch(() => props.show, (isOpen) => {
@@ -118,7 +129,7 @@ watch(() => props.show, (isOpen) => {
 
       <div class="modal-header">
         <h3>Print Transfers</h3>
-        <button class="close-btn" @click="close">✕</button>
+        <button class="close-btn" @click="close" :disabled="submitting">✕</button>
       </div>
 
       <div class="modal-body">
@@ -210,6 +221,7 @@ watch(() => props.show, (isOpen) => {
         <button
           class="btn btn-secondary"
           @click="close"
+          :disabled="submitting"
         >
           Cancel
         </button>
@@ -218,6 +230,7 @@ watch(() => props.show, (isOpen) => {
           class="btn btn-primary"
           @click="submitPrint"
           :disabled="
+            submitting ||
             !dateFrom ||
             !dateTo ||
             !preparedBy ||
@@ -226,7 +239,7 @@ watch(() => props.show, (isOpen) => {
             (remarks === 'Others' && !customRemarks.trim())
           "
         >
-          Generate & Print
+          {{ submitting ? 'Generating…' : 'Generate & Print' }}
         </button>
 
       </div>
@@ -237,129 +250,132 @@ watch(() => props.show, (isOpen) => {
 
 <style scoped>
 .modal-overlay{
-    position:fixed;
-    inset:0;
-    background:rgba(0,0,0,.6);
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    z-index:1000;
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.6);
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  z-index:1000;
 }
 
 .modal-content{
-    width:100%;
-    max-width:450px;
-    background:#fff;
-    border-radius:10px;
-    overflow:hidden;
-    box-shadow:0 12px 30px rgba(0,0,0,.2);
+  width:100%;
+  max-width:450px;
+  background:#fff;
+  border-radius:10px;
+  overflow:hidden;
+  box-shadow:0 12px 30px rgba(0,0,0,.2);
 }
 
 .modal-header{
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    padding:16px 20px;
-    border-bottom:1px solid #e2e8f0;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:16px 20px;
+  border-bottom:1px solid #e2e8f0;
 }
 
 .modal-header h3{
-    margin:0;
-    font-size:18px;
+  margin:0;
+  font-size:18px;
 }
 
 .close-btn{
-    border:none;
-    background:none;
-    font-size:20px;
-    cursor:pointer;
-    color:#64748b;
+  border:none;
+  background:none;
+  font-size:20px;
+  cursor:pointer;
+  color:#64748b;
 }
+.close-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .modal-body{
-    padding:20px;
+  padding:20px;
 }
 
 .hint{
-    margin:0 0 18px;
-    color:#64748b;
-    font-size:13px;
+  margin:0 0 18px;
+  color:#64748b;
+  font-size:13px;
 }
 
 .form-grid{
-    display:grid;
-    grid-template-columns:1fr 1fr;
-    gap:14px;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:14px;
 }
 
 .prepared-by{
-    margin-top:18px;
+  margin-top:18px;
 }
 
 label{
-    display:block;
-    margin-bottom:6px;
-    font-size:12px;
-    font-weight:600;
-    color:#475569;
+  display:block;
+  margin-bottom:6px;
+  font-size:12px;
+  font-weight:600;
+  color:#475569;
 }
 
 .required{
-    color:#ef4444;
+  color:#ef4444;
 }
 
 input, .select-input{
-    width:100%;
-    padding:10px;
-    border:1px solid #cbd5e1;
-    border-radius:6px;
-    font-size:13px;
-    outline:none;
-    transition:.2s;
+  width:100%;
+  padding:10px;
+  border:1px solid #cbd5e1;
+  border-radius:6px;
+  font-size:13px;
+  outline:none;
+  transition:.2s;
 }
 
 .select-input{
-    height:42px;
-    background:#fff;
+  height:42px;
+  background:#fff;
 }
 
 .mt-2{
-    margin-top:8px;
+  margin-top:8px;
 }
 
 input:focus, .select-input:focus{
-    border-color:#1e40af;
-    box-shadow:0 0 0 3px rgba(30,64,175,.1);
+  border-color:#1e40af;
+  box-shadow:0 0 0 3px rgba(30,64,175,.1);
 }
 
 .modal-footer{
-    padding:16px 20px;
-    display:flex;
-    justify-content:flex-end;
-    gap:10px;
-    border-top:1px solid #e2e8f0;
+  padding:16px 20px;
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  border-top:1px solid #e2e8f0;
 }
 
 .btn{
-    padding:10px 18px;
-    border-radius:6px;
-    cursor:pointer;
-    font-weight:600;
+  padding:10px 18px;
+  border-radius:6px;
+  cursor:pointer;
+  font-weight:600;
+  border: none;
 }
 
 .btn-secondary{
-    background:#f1f5f9;
-    border:1px solid #cbd5e1;
+  background:#f1f5f9;
+  border:1px solid #cbd5e1;
 }
+.btn-secondary:disabled{ opacity: 0.6; cursor: not-allowed; }
 
 .btn-primary{
-    background:#1e40af;
-    color:#fff;
-    border:none;
+  background:#1e40af;
+  color:#fff;
+  border:none;
 }
 
 .btn-primary:disabled{
-    background:#94a3b8;
-    cursor:not-allowed;
+  background:#94a3b8;
+  cursor:not-allowed;
 }
 </style>

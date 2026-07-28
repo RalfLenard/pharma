@@ -45,4 +45,9 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
+
+    public function printedBy()
+{
+    return $this->belongsTo(User::class, 'printed_by');
+}
 }

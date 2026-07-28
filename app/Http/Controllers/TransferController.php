@@ -29,17 +29,8 @@ class TransferController extends Controller
             return back()->withErrors(['qty' => 'Insufficient stock. Current stock: ' . $currentStock]);
         }
 
-        // Create Transfer Record
-        $transfer = Transfer::create([
-            'item_id' => $validated['item_id'],
-            'qty' => $validated['qty'],
-            'remarks' => $validated['remarks'],
-            'date' => $validated['date'],
-            'created_by' => auth()->id(),
-        ]);
-
-        // Create Out Transaction
-        Transaction::create([
+        // Create Out Transaction first so we can link it
+        $transaction = Transaction::create([
             'item_id' => $item->id,
             'type' => 'out',
             'qty' => $validated['qty'],
@@ -47,7 +38,95 @@ class TransferController extends Controller
             'note' => "Transfer | {$validated['date']} | {$validated['remarks']}",
         ]);
 
+        // Create Transfer Record, linked to its transaction
+        $transfer = Transfer::create([
+            'item_id' => $validated['item_id'],
+            'qty' => $validated['qty'],
+            'remarks' => $validated['remarks'],
+            'date' => $validated['date'],
+            'created_by' => auth()->id(),
+            'transaction_id' => $transaction->id,
+        ]);
+
         return redirect()->back()->with('success', 'Item transferred successfully.');
+    }
+
+    public function update(Request $request, Transfer $transfer)
+    {
+        $validated = $request->validate([
+            'item_id' => 'required|exists:items,id',
+            'qty' => 'required|integer|min:1',
+            'remarks' => 'required|string|max:255',
+            'date' => 'required|date',
+        ]);
+
+        $newItem = Item::findOrFail($validated['item_id']);
+        $oldItem = $transfer->item_id == $validated['item_id']
+            ? $newItem
+            : Item::findOrFail($transfer->item_id);
+
+        // Figure out stock as if this transfer hadn't happened yet,
+        // then check if the new qty fits.
+        if ($oldItem->id === $newItem->id) {
+            // Same item: add back the old qty before checking the new one
+            $stockExcludingThisTransfer = $this->getCurrentStock($newItem) + $transfer->qty;
+        } else {
+            // Item changed: old item gets its stock back, new item is checked fresh
+            $stockExcludingThisTransfer = $this->getCurrentStock($newItem);
+        }
+
+        if ($stockExcludingThisTransfer < $validated['qty']) {
+            return back()->withErrors([
+                'qty' => 'Insufficient stock. Available: ' . $stockExcludingThisTransfer,
+            ]);
+        }
+
+        // Update the linked Transaction (ledger entry) to match
+        $transaction = $transfer->transaction_id
+            ? Transaction::find($transfer->transaction_id)
+            : null;
+
+        if ($transaction) {
+            $transaction->update([
+                'item_id' => $validated['item_id'],
+                'type' => 'out',
+                'qty' => $validated['qty'],
+                'date' => $validated['date'],
+                'note' => "Transfer | {$validated['date']} | {$validated['remarks']}",
+            ]);
+        } else {
+            // Fallback: no linked transaction found (e.g. legacy row), create one
+            $transaction = Transaction::create([
+                'item_id' => $validated['item_id'],
+                'type' => 'out',
+                'qty' => $validated['qty'],
+                'date' => $validated['date'],
+                'note' => "Transfer | {$validated['date']} | {$validated['remarks']}",
+            ]);
+        }
+
+        // Update the Transfer record itself
+        $transfer->update([
+            'item_id' => $validated['item_id'],
+            'qty' => $validated['qty'],
+            'remarks' => $validated['remarks'],
+            'date' => $validated['date'],
+            'transaction_id' => $transaction->id,
+        ]);
+
+        return redirect()->back()->with('success', 'Transfer updated successfully.');
+    }
+
+    public function destroy(Transfer $transfer)
+    {
+        // Remove the linked ledger entry so stock isn't permanently reduced
+        if ($transfer->transaction_id) {
+            Transaction::where('id', $transfer->transaction_id)->delete();
+        }
+
+        $transfer->delete();
+
+        return redirect()->back()->with('success', 'Transfer deleted successfully.');
     }
 
     private function getCurrentStock($item)
@@ -56,53 +135,74 @@ class TransferController extends Controller
         $out = $item->transactions()->where('type', 'out')->sum('qty') + ($item->init_out ?? 0);
         return $in - $out;
     }
-    public function print(Request $request)
+public function print(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'date_from' => ['required', 'date'],
-            'date_to' => ['required', 'date'],
+            'date_to' => ['required', 'date', 'after_or_equal:date_from'],
             'prepared_by' => ['required', 'string', 'max:255'],
             'prepared_by_position' => ['required', 'string', 'max:255'],
             'remarks' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $transfers = Transfer::with('item')
-            ->whereBetween('created_at', [
-                $request->date_from . ' 00:00:00',
-                $request->date_to . ' 23:59:59',
-            ])
-            ->when(
-                $request->filled('remarks'),
-                fn($q) =>
-                $q->where('remarks', $request->remarks)
-            )
-            ->latest()
-            ->get();
-
         $referenceId = $this->generateReferenceId();
 
         PrintTransfer::create([
             'reference_id' => $referenceId,
-            'prepared_by' => $request->prepared_by,
-            'prepared_by_position' => $request->prepared_by_position,
+            'date_from' => $validated['date_from'],
+            'date_to' => $validated['date_to'],
+            'prepared_by' => $validated['prepared_by'],
+            'prepared_by_position' => $validated['prepared_by_position'],
+            'remarks' => $validated['remarks'] ?? null,
             'printed_by' => auth()->id(),
             'printed_at' => now(),
         ]);
 
+        return response()->json([
+            'reference_id' => $referenceId,
+        ]);
+    }
+
+    public function reprint(string $referenceId)
+    {
+        $printTransfer = PrintTransfer::where('reference_id', $referenceId)->firstOrFail();
+
+        $transfers = Transfer::with('item')
+            ->whereBetween('created_at', [
+                $printTransfer->date_from->format('Y-m-d') . ' 00:00:00',
+                $printTransfer->date_to->format('Y-m-d') . ' 23:59:59',
+            ])
+            ->when(
+                filled($printTransfer->remarks),
+                fn($q) => $q->where('remarks', $printTransfer->remarks)
+            )
+            ->latest()
+            ->get();
+
         return Pdf::view('Print', [
             'transfers' => $transfers,
-            'reference_id' => $referenceId,
-            'date_from' => $request->date_from,
-            'date_to' => $request->date_to,
-            'prepared_by' => $request->prepared_by,
-            'prepared_by_position' => $request->prepared_by_position,
-            'remarks' => $request->remarks,
+            'reference_id' => $printTransfer->reference_id,
+            'date_from' => $printTransfer->date_from,
+            'date_to' => $printTransfer->date_to,
+            'prepared_by' => $printTransfer->prepared_by,
+            'prepared_by_position' => $printTransfer->prepared_by_position,
+            'remarks' => $printTransfer->remarks,
         ])
             ->landscape()
             ->format('A4')
-            ->name($referenceId . '.pdf');
+            ->name($printTransfer->reference_id . '.pdf');
     }
-    private function generateReferenceId()
+
+    public function printHistory(Request $request)
+    {
+        $history = PrintTransfer::with('printedBy')
+            ->orderByDesc('printed_at')
+            ->paginate(15);
+
+        return response()->json($history);
+    }
+
+    private function generateReferenceId(): string
     {
         $year = now()->year;
         $prefix = $year . '-';
@@ -111,12 +211,7 @@ class TransferController extends Controller
             ->orderByDesc('reference_id')
             ->first();
 
-        if ($last) {
-            $lastNumber = (int) substr($last->reference_id, -4);
-            $nextNumber = $lastNumber + 1;
-        } else {
-            $nextNumber = 1;
-        }
+        $nextNumber = $last ? ((int) substr($last->reference_id, -4)) + 1 : 1;
 
         return $prefix . str_pad($nextNumber, 4, '0', STR_PAD_LEFT);
     }

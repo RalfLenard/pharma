@@ -27,14 +27,23 @@ Route::middleware(['web', ])->prefix('/')->name('pharmacy.')->group(function () 
     Route::put('/settings', [PharmacyInventoryController::class, 'updateSettings'])->name('settings.update');
    
 });
+Route::post('/pharmacy/transfers', [TransferController::class, 'store'])
+    ->name('pharmacy.transfers.store');
 
- Route::post('/pharmacy/transfers', [App\Http\Controllers\TransferController::class, 'store'])
-     ->name('pharmacy.transfers.store');
+// Print flow — POST creates the record, GET reprint renders the PDF.
+// Must be registered BEFORE any /transfers/{transfer} routes below,
+// otherwise "print" gets swallowed as a route-model-bound {transfer} param.
+Route::post('/transfers/print', [TransferController::class, 'print']);
+Route::get('/print-history', [TransferController::class, 'printHistory']);
+Route::get('/print-history/{referenceId}/reprint', [TransferController::class, 'reprint']);
 
-    Route::get('/pharmacy/transfers/print', [TransferController::class, 'print']);
-
-
-
+// Wildcard/parameterized routes go LAST
+Route::post('/transfers/{transfer}', [TransferController::class, 'update'])
+    ->name('transfers.update');
+Route::put('/transfers/{transfer}', [TransferController::class, 'update'])
+    ->name('transfers.update');
+Route::delete('/transfers/{transfer}', [TransferController::class, 'destroy'])
+    ->name('transfers.destroy');
 Route::get('/firebase-test', function () {
     $database = Firebase::database();
 
