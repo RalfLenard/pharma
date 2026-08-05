@@ -40,7 +40,7 @@ Route::get('/print-history/{referenceId}/reprint', [TransferController::class, '
 // Wildcard/parameterized routes go LAST
 Route::post('/transfers/{transfer}', [TransferController::class, 'update'])
     ->name('transfers.update');
-Route::put('/transfers/{transfer}', [TransferController::class, 'update'])
+Route::post('/transfers/{transfer}', [TransferController::class, 'update'])
     ->name('transfers.update');
 Route::delete('/transfers/{transfer}', [TransferController::class, 'destroy'])
     ->name('transfers.destroy');

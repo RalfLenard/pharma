@@ -40,22 +40,63 @@ watch(() => props.transfer, (t) => {
   form.value.item_id = t.item_id ?? t.item?.id ?? ''
   form.value.qty = t.qty ?? t.quantity ?? 1
   form.value.destination = t.destination ?? ''
-  form.value.remarks = t.remarks ?? ''
   form.value.date = normalizeDate(t.date ?? t.created_at ?? '')
+
+  // If the stored remark isn't one of the presets, treat it as a custom
+  // "Others" value — select "Others" and preload the free-text field,
+  // otherwise the <select> would show blank and the custom text would
+  // be lost on save.
+  const storedRemark = t.remarks ?? ''
+  if (storedRemark && !remarkOptions.includes(storedRemark)) {
+    form.value.remarks = 'Others'
+    customRemarks.value = storedRemark
+  } else {
+    form.value.remarks = storedRemark
+    customRemarks.value = ''
+  }
 
   errors.value = {}
 }, { immediate: true })
 
+// Avoid UTC conversion shifting the date by a day — parse the date-ish
+// string manually instead of going through Date/toISOString.
 function normalizeDate(value) {
   if (!value) return ''
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`
+
   const d = new Date(value)
   if (isNaN(d.getTime())) return ''
-  return d.toISOString().slice(0, 10) // yyyy-mm-dd for <input type="date">
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 const selectedItem = computed(() =>
   props.items.find((i) => Number(i.id) === Number(form.value.item_id))
 )
+
+// The actual remarks value to submit — resolves "Others" to the
+// free-text the user typed in customRemarks.
+const resolvedRemarks = computed(() => {
+  if (form.value.remarks === 'Others') {
+    return customRemarks.value?.trim() || ''
+  }
+  return form.value.remarks?.trim() || ''
+})
+
+// Save button now also requires remarks (and, if "Others" is chosen,
+// requires the custom text to be filled in).
+const canSubmit = computed(() => {
+  if (submitting.value) return false
+  if (!form.value.destination?.trim()) return false
+  if (!form.value.date) return false
+  if (!form.value.qty || form.value.qty <= 0) return false
+  if (!form.value.remarks) return false
+  if (form.value.remarks === 'Others' && !customRemarks.value?.trim()) return false
+  return true
+})
 
 function close() {
   if (submitting.value) return
@@ -69,24 +110,24 @@ async function submit() {
   errors.value = {}
 
   const finalDestination = form.value.destination?.trim()
+  const finalRemarks = resolvedRemarks.value
 
   try {
     const { data } = await axios.post(`/transfers/${form.value.id}`, {
       item_id: form.value.item_id,
       qty: form.value.qty,
       destination: finalDestination,
-      remarks: form.value.remarks?.trim() || '',
+      remarks: finalRemarks,
       date: form.value.date,
     })
 
-    // Construct a comprehensive record ensuring all relationships and fallback values carry over
     const updatedRecord = {
       ...props.transfer,
       ...(data.transfer || data),
       item_id: form.value.item_id,
       qty: form.value.qty,
       destination: finalDestination,
-      remarks: form.value.remarks?.trim() || '',
+      remarks: finalRemarks,
       date: form.value.date,
       item: selectedItem.value || props.transfer?.item
     }
@@ -180,7 +221,7 @@ function firstError(field) {
           <button
             class="btn btn-save"
             @click="submit"
-            :disabled="submitting || !form.destination?.trim() || !form.date || !form.qty || form.qty <= 0"
+            :disabled="!canSubmit"
           >
             {{ submitting ? 'Saving…' : 'Save Changes' }}
           </button>
