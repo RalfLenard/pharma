@@ -11,7 +11,7 @@ class Transfer extends Model
 
     protected $fillable = [
         'item_id', 'qty', 'date',
-         'remarks', 'created_by', 'transferred_at', 
+         'remarks', 'created_by', 'transferred_at', 'destination'
     ];
 
     protected $casts = [

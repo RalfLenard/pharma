@@ -17,7 +17,8 @@ class TransferController extends Controller
         $validated = $request->validate([
             'item_id' => 'required|exists:items,id',
             'qty' => 'required|integer|min:1',
-            'remarks' => 'required|string|max:255',
+            'destination' => 'required|string|max:255',
+            'remarks' => 'nullable|string|max:255',
             'date' => 'required|date',
         ]);
 
@@ -29,20 +30,30 @@ class TransferController extends Controller
             return back()->withErrors(['qty' => 'Insufficient stock. Current stock: ' . $currentStock]);
         }
 
+        $noteParts = [
+            "Transfer",
+            $validated['date'],
+            "To: {$validated['destination']}",
+        ];
+        if (!empty($validated['remarks'])) {
+            $noteParts[] = $validated['remarks'];
+        }
+
         // Create Out Transaction first so we can link it
         $transaction = Transaction::create([
             'item_id' => $item->id,
             'type' => 'out',
             'qty' => $validated['qty'],
             'date' => $validated['date'],
-            'note' => "Transfer | {$validated['date']} | {$validated['remarks']}",
+            'note' => implode(' | ', $noteParts),
         ]);
 
         // Create Transfer Record, linked to its transaction
         $transfer = Transfer::create([
             'item_id' => $validated['item_id'],
             'qty' => $validated['qty'],
-            'remarks' => $validated['remarks'],
+            'destination' => $validated['destination'],
+            'remarks' => $validated['remarks'] ?? null,
             'date' => $validated['date'],
             'created_by' => auth()->id(),
             'transaction_id' => $transaction->id,
@@ -56,7 +67,8 @@ class TransferController extends Controller
         $validated = $request->validate([
             'item_id' => 'required|exists:items,id',
             'qty' => 'required|integer|min:1',
-            'remarks' => 'required|string|max:255',
+            'destination' => 'required|string|max:255',
+            'remarks' => 'nullable|string|max:255',
             'date' => 'required|date',
         ]);
 
@@ -81,6 +93,16 @@ class TransferController extends Controller
             ]);
         }
 
+        $noteParts = [
+            "Transfer",
+            $validated['date'],
+            "To: {$validated['destination']}",
+        ];
+        if (!empty($validated['remarks'])) {
+            $noteParts[] = $validated['remarks'];
+        }
+        $note = implode(' | ', $noteParts);
+
         // Update the linked Transaction (ledger entry) to match
         $transaction = $transfer->transaction_id
             ? Transaction::find($transfer->transaction_id)
@@ -92,7 +114,7 @@ class TransferController extends Controller
                 'type' => 'out',
                 'qty' => $validated['qty'],
                 'date' => $validated['date'],
-                'note' => "Transfer | {$validated['date']} | {$validated['remarks']}",
+                'note' => $note,
             ]);
         } else {
             // Fallback: no linked transaction found (e.g. legacy row), create one
@@ -101,7 +123,7 @@ class TransferController extends Controller
                 'type' => 'out',
                 'qty' => $validated['qty'],
                 'date' => $validated['date'],
-                'note' => "Transfer | {$validated['date']} | {$validated['remarks']}",
+                'note' => $note,
             ]);
         }
 
@@ -109,7 +131,8 @@ class TransferController extends Controller
         $transfer->update([
             'item_id' => $validated['item_id'],
             'qty' => $validated['qty'],
-            'remarks' => $validated['remarks'],
+            'destination' => $validated['destination'],
+            'remarks' => $validated['remarks'] ?? null,
             'date' => $validated['date'],
             'transaction_id' => $transaction->id,
         ]);
@@ -135,7 +158,7 @@ class TransferController extends Controller
         $out = $item->transactions()->where('type', 'out')->sum('qty') + ($item->init_out ?? 0);
         return $in - $out;
     }
-public function print(Request $request)
+    public function print(Request $request)
     {
         $validated = $request->validate([
             'date_from' => ['required', 'date'],

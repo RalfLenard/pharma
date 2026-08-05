@@ -13,6 +13,7 @@ const emit = defineEmits(['update:show'])
 const form = ref({
   item_id: null,
   qty: 1,
+  destination: '',
   remarks: '',
   date: '',
 })
@@ -29,6 +30,7 @@ const remarkOptions = [
   'Others'
 ]
 
+
 const todayISO = () => {
   const d = new Date()
   const offset = d.getTimezoneOffset()
@@ -39,20 +41,17 @@ const todayISO = () => {
 const close = () => {
   emit('update:show', false)
   setTimeout(() => {
-    form.value = { item_id: null, qty: 1, remarks: '', date: '' }
-    customRemarks.value = ''
+    form.value = { item_id: null, qty: 1, destination: '', remarks: '', date: '' }
   }, 300)
 }
 
 const submitTransfer = () => {
   if (!props.item) return
 
-  const finalRemarks = form.value.remarks === 'Others' 
-    ? customRemarks.value?.trim() 
-    : form.value.remarks
+  const finalDestination = form.value.destination?.trim()
 
-  if (!finalRemarks) {
-    alert("Please enter remarks / destination")
+  if (!finalDestination) {
+    alert("Please enter a destination")
     return
   }
 
@@ -69,7 +68,8 @@ const submitTransfer = () => {
   router.post('/pharmacy/transfers', {
     item_id: form.value.item_id,
     qty: form.value.qty,
-    remarks: finalRemarks,
+    destination: finalDestination,
+    remarks: form.value.remarks?.trim() || '',
     date: form.value.date,
   }, {
     preserveScroll: true,
@@ -82,9 +82,9 @@ watch(() => props.show, (isOpen) => {
   if (isOpen && props.item) {
     form.value.item_id = props.item.id
     form.value.qty = 1
+    form.value.destination = ''
     form.value.remarks = ''
     form.value.date = todayISO()
-    customRemarks.value = ''
   }
 })
 </script>
@@ -116,9 +116,18 @@ watch(() => props.show, (isOpen) => {
         </div>
 
         <div>
-          <label>Remarks / Destination <span class="required">*</span></label>
+          <label>Destination <span class="required">*</span></label>
+          <input
+            v-model="form.destination"
+            type="text"
+            placeholder="Enter destination..."
+          />
+        </div>
+
+         <div>
+          <label>Remarks  <span class="required">*</span></label>
           <select v-model="form.remarks" class="select-input">
-            <option value="" disabled>Select destination...</option>
+            <option value="" disabled>Select remarks...</option>
             <option v-for="option in remarkOptions" :key="option" :value="option">
               {{ option }}
             </option>
@@ -129,7 +138,7 @@ watch(() => props.show, (isOpen) => {
             v-if="form.remarks === 'Others'"
             v-model="customRemarks"
             type="text"
-            placeholder="Please specify destination..."
+            placeholder="Please specify remarks..."
             class="mt-2"
           />
         </div>
@@ -140,7 +149,7 @@ watch(() => props.show, (isOpen) => {
         <button 
           class="btn btn-primary" 
           @click="submitTransfer"
-          :disabled="form.qty > currentStock || form.qty <= 0 || !form.remarks || !form.date || (form.remarks === 'Others' && !customRemarks?.trim())"
+          :disabled="form.qty > currentStock || form.qty <= 0 || !form.destination?.trim() || !form.date"
         >
           Confirm Transfer
         </button>
@@ -175,11 +184,11 @@ watch(() => props.show, (isOpen) => {
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
 label { display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px; }
 .required { color: #ef4444; }
+.optional { color: #94a3b8; font-weight: 400; }
 
 input, select { 
   width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; 
 }
-.select-input { height: 42px; }
 .mt-2 { margin-top: 8px; }
 
 .modal-footer { 

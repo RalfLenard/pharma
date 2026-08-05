@@ -205,10 +205,10 @@
                         </td>
 
                         <td align="center">
-                            {{ $transfer->item->exp ? \Carbon\Carbon::parse($transfer->exp)->format('n/Y') : '—' }}
+                            {{ $transfer->item->exp ? \Carbon\Carbon::parse($transfer->item->exp)->format('n/Y') : '—' }}
                         </td>
                         <td align="center">
-                            {{ $transfer->remarks ?? '—' }}
+                            {{ $transfer->destination ?? '—' }}
                         </td>
 
                     </tr>
