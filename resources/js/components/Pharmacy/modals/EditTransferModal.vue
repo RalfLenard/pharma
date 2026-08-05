@@ -10,6 +10,15 @@ const props = defineProps({
 
 const emit = defineEmits(['update:show', 'updated'])
 
+const form = ref({
+  id: null,
+  item_id: '',
+  qty: 1,
+  destination: '',
+  remarks: '',
+  date: '',
+})
+
 const remarkOptions = [
   'MHO',
   'Dental',
@@ -19,15 +28,6 @@ const remarkOptions = [
   'RHU V',
   'Others'
 ]
-
-const form = ref({
-  id: null,
-  item_id: '',
-  qty: 1,
-  remarks: '',
-  date: '',
-})
-
 const customRemarks = ref('')
 const submitting = ref(false)
 const errors = ref({})
@@ -36,24 +36,11 @@ const errors = ref({})
 watch(() => props.transfer, (t) => {
   if (!t) return
 
-  const existingRemark = t.remarks ?? t.note ?? t.notes ?? ''
-
-  // If the stored remark matches one of our known options, select it directly.
-  // Otherwise treat it as a custom value and preselect "Others".
-  if (remarkOptions.includes(existingRemark)) {
-    form.value.remarks = existingRemark
-    customRemarks.value = ''
-  } else if (existingRemark) {
-    form.value.remarks = 'Others'
-    customRemarks.value = existingRemark
-  } else {
-    form.value.remarks = ''
-    customRemarks.value = ''
-  }
-
   form.value.id = t.id
   form.value.item_id = t.item_id ?? t.item?.id ?? ''
   form.value.qty = t.qty ?? t.quantity ?? 1
+  form.value.destination = t.destination ?? ''
+  form.value.remarks = t.remarks ?? ''
   form.value.date = normalizeDate(t.date ?? t.created_at ?? '')
 
   errors.value = {}
@@ -81,15 +68,14 @@ async function submit() {
   submitting.value = true
   errors.value = {}
 
-  const finalRemarks = form.value.remarks === 'Others'
-    ? customRemarks.value.trim()
-    : form.value.remarks
+  const finalDestination = form.value.destination?.trim()
 
   try {
     const { data } = await axios.post(`/transfers/${form.value.id}`, {
       item_id: form.value.item_id,
       qty: form.value.qty,
-      remarks: finalRemarks,
+      destination: finalDestination,
+      remarks: form.value.remarks?.trim() || '',
       date: form.value.date,
     })
 
@@ -99,7 +85,8 @@ async function submit() {
       ...(data.transfer || data),
       item_id: form.value.item_id,
       qty: form.value.qty,
-      remarks: finalRemarks,
+      destination: finalDestination,
+      remarks: form.value.remarks?.trim() || '',
       date: form.value.date,
       item: selectedItem.value || props.transfer?.item
     }
@@ -156,6 +143,17 @@ function firstError(field) {
           </div>
 
           <div class="form-group">
+            <label>Destination <span class="required">*</span></label>
+            <input
+              v-model="form.destination"
+              type="text"
+              placeholder="Enter destination..."
+              class="form-input"
+            />
+            <small v-if="firstError('destination')" class="field-error">{{ firstError('destination') }}</small>
+          </div>
+
+          <div class="form-group">
             <label>Remarks / Destination <span class="required">*</span></label>
             <select v-model="form.remarks" class="form-input">
               <option value="" disabled>Select destination...</option>
@@ -179,7 +177,11 @@ function firstError(field) {
 
         <div class="modal-footer">
           <button class="btn btn-cancel" @click="close" :disabled="submitting">Cancel</button>
-          <button class="btn btn-save" @click="submit" :disabled="submitting">
+          <button
+            class="btn btn-save"
+            @click="submit"
+            :disabled="submitting || !form.destination?.trim() || !form.date || !form.qty || form.qty <= 0"
+          >
             {{ submitting ? 'Saving…' : 'Save Changes' }}
           </button>
         </div>
@@ -256,6 +258,11 @@ function firstError(field) {
 
 .required {
   color: #dc2626;
+}
+
+.optional {
+  color: #94a3b8;
+  font-weight: 400;
 }
 
 .form-input {
