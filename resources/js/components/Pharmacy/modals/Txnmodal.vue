@@ -63,6 +63,39 @@ function itemStock(item) {
   return itemStockIn(item) - itemStockOut(item)
 }
 
+// Stock currently available for whatever is selected/being created.
+// A brand new item ('new' tab) always starts at 0 stock.
+const availableStock = computed(() => {
+  if (activeTab.value === 'existing') {
+    return selectedItem.value ? itemStock(selectedItem.value) : 0
+  }
+  return 0
+})
+
+// Client-side guard: only relevant for "Stock out" transactions.
+// Mirrors the rule used on the item modal — can't stock out with no
+// stock on hand, and can't stock out more than what's available.
+const stockError = computed(() => {
+  if (form.type !== 'out') return ''
+
+  const qty = Number(form.qty) || 0
+  if (qty <= 0) return ''
+
+  if (activeTab.value === 'new') {
+    return 'You cannot stock out a newly created item — it has no stock yet.'
+  }
+
+  if (!selectedItem.value) return ''
+
+  if (availableStock.value <= 0) {
+    return 'You cannot stock out an item that has no stock.'
+  }
+  if (qty > availableStock.value) {
+    return `Only ${availableStock.value} ${selectedItem.value.unit || 'pcs'} available in stock.`
+  }
+  return ''
+})
+
 watch(() => props.show, (visible) => {
   if (!visible) return
   form.reset()
@@ -72,6 +105,14 @@ watch(() => props.show, (visible) => {
   form.date = localDateStr()
   form.qty = 0
 }, { immediate: true })
+
+// If the user switches to the "new item" tab while "Stock out" is
+// selected, fall back to "Stock in" since a new item can't be stocked out.
+watch(activeTab, (tab) => {
+  if (tab === 'new' && form.type === 'out') {
+    form.type = 'in'
+  }
+})
 
 function close() {
   emit('update:show', false)
@@ -85,6 +126,10 @@ function submit() {
   }
   if (activeTab.value === 'new' && !form.supply_item_name) {
     alert('Supply Item name is required.')
+    return
+  }
+  if (stockError.value) {
+    // Guard against submitting an invalid stock-out value.
     return
   }
 
@@ -226,14 +271,20 @@ function submit() {
             <div class="select-wrapper">
               <select v-model="form.type">
                 <option value="in">Stock in (received)</option>
-                <option value="out">Stock out (used)</option>
+                <option value="out" :disabled="activeTab === 'new'">Stock out (used)</option>
                 <option value="adj">Adjustment</option>
               </select>
             </div>
           </div>
           <div class="field mandatory">
             <label>Quantity *</label>
-            <input v-model.number="form.qty" type="number" min="0" />
+            <input
+              v-model.number="form.qty"
+              type="number"
+              min="0"
+              :class="{ 'input-error': stockError }"
+            />
+            <span v-if="stockError" class="field-error">{{ stockError }}</span>
           </div>
         </div>
 
@@ -281,7 +332,7 @@ function submit() {
 
       <div class="mfoot">
         <button type="button" class="btn-cancel" @click="close">Cancel</button>
-        <button type="button" class="btn-submit" :disabled="form.processing" @click="submit">
+        <button type="button" class="btn-submit" :disabled="form.processing || !!stockError" @click="submit">
           Record transaction
         </button>
       </div>
@@ -405,6 +456,18 @@ function submit() {
 .field input:focus, .field select:focus {
   border-color: #3b82f6;
   box-shadow: 0 0 0 1px #3b82f6;
+}
+.field input.input-error {
+  border-color: #dc2626;
+}
+.field input.input-error:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 1px #dc2626;
+}
+.field-error {
+  font-size: 11.5px;
+  color: #dc2626;
+  margin-top: 2px;
 }
 .select-wrapper {
   position: relative;

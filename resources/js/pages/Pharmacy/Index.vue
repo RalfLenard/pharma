@@ -131,7 +131,7 @@ function itemStatus(item) {
   return 'ok'
 }
 
-const STATUS_LABEL = { ok: 'Adequate', low: 'Low stock', critical: 'Critical', expired: 'Expired', consume: 'Discard' }
+const STATUS_LABEL = { ok: 'Adequate', low: 'Low stock', critical: 'Out Of Stock', expired: 'Expired', consume: 'Discard' }
 const STATUS_BADGE_CLASS = { ok: 'b-ok', low: 'b-low', critical: 'b-crit', expired: 'b-exp', consume: 'b-consume' }
 
 /* Stats */

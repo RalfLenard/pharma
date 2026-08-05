@@ -26,15 +26,15 @@ function getQuarterFromDate(dateString) {
   if (!dateString) return ''
   const date = new Date(dateString)
   if (isNaN(date.getTime())) return ''
-  
+
   const year = date.getFullYear() // Extracts the selected year (e.g., 2026)
   const month = date.getMonth() + 1 // January = 1, July = 7, etc.
-  
+
   let qString = 'Q4'
   if (month >= 1 && month <= 3) qString = 'Q1'
   else if (month >= 4 && month <= 6) qString = 'Q2'
   else if (month >= 7 && month <= 9) qString = 'Q3'
-  
+
   return `${qString} ${year}` // Returns formatted string: "Q3 2026", "Q1 2027", etc.
 }
 
@@ -55,11 +55,46 @@ const stockOut = computed({
   }
 })
 
-// Dynamic current stock preview calculation
+// Stock already on hand for this item (0 for a brand new item being added)
+const availableStock = computed(() => {
+  if (props.mode === 'edit' && props.item) {
+    return Number(props.item.stock ?? 0)
+  }
+  return 0
+})
+
+// Dynamic current stock preview calculation — now factors in existing stock
+// so the preview reflects the REAL resulting stock after this transaction.
 const currentStockPreview = computed(() => {
   const incoming = Number(stockIn.value) || 0
   const outgoing = Number(stockOut.value) || 0
-  return incoming - outgoing
+  return availableStock.value + incoming - outgoing
+})
+
+// Client-side validation mirroring the backend rules:
+// 1. Can't stock out when there is no stock at all.
+// 2. Can't stock out more than what's available.
+const stockError = computed(() => {
+  const outgoing = Number(stockOut.value) || 0
+  if (outgoing <= 0) return ''
+
+  if (props.mode === 'edit') {
+    if (availableStock.value <= 0) {
+      return 'You cannot stock out an item that has no stock.'
+    }
+    if (outgoing > availableStock.value) {
+      return `Only ${availableStock.value} item(s) are available in stock.`
+    }
+  } else {
+    const incoming = Number(stockIn.value) || 0
+    if (incoming === 0) {
+      return 'You cannot stock out an item that has no stock.'
+    }
+    if (outgoing > incoming) {
+      return 'Stock out cannot be greater than the stock in.'
+    }
+  }
+  return ''
 })
 
 // WATCHER: Automatically convert the date picker choice into the code string
@@ -89,19 +124,19 @@ watch(() => props.show, (visible) => {
     form.order_qty = props.item.order_qty || 0
     form.fund = props.item.fund || ''
     form.unit = props.item.unit || ''
-    
+
     // Assign the saved quarter value from DB
-    form.quarter_delivered = props.item.quarter_delivered || getQuarterFromDate(localDateStr()) 
-    
+    form.quarter_delivered = props.item.quarter_delivered || getQuarterFromDate(localDateStr())
+
     // Attempt to parse out the year from the database string to synchronize the calendar field display
     if (props.item.quarter_delivered && props.item.quarter_delivered.includes(' ')) {
       const parts = props.item.quarter_delivered.split(' ')
       const savedYear = parts[1]
       quarterDeliveredDate.value = `${savedYear}-07-01` // Sets the picker focus window to the stored year
     } else {
-      quarterDeliveredDate.value = localDateStr() 
+      quarterDeliveredDate.value = localDateStr()
     }
-    
+
     form.add_in = 0
     form.add_out = 0
   } else {
@@ -122,6 +157,11 @@ function close() {
 function submit() {
   if (!form.name?.trim()) {
     alert('Supply Item name is required.')
+    return
+  }
+
+  if (stockError.value) {
+    // Guard against submitting an invalid stock-out value.
     return
   }
 
@@ -242,10 +282,10 @@ function submit() {
             <label class="form-label">
               Quarter Delivered Date (Calculates: <strong style="color: #2563eb;">{{ form.quarter_delivered || 'None' }}</strong>)
             </label>
-            <input 
-              v-model="quarterDeliveredDate" 
-              type="date" 
-              class="form-input icon-right" 
+            <input
+              v-model="quarterDeliveredDate"
+              type="date"
+              class="form-input icon-right"
             />
           </div>
         </div>
@@ -253,6 +293,9 @@ function submit() {
         <hr class="section-divider" />
         <div class="section-title">
           {{ mode === 'edit' ? 'Add stock transaction (optional)' : 'Initial stock entry' }}
+          <span v-if="mode === 'edit'" class="available-stock-tag">
+            Currently available: {{ availableStock }}
+          </span>
         </div>
 
         <div class="form-row dynamic-cols">
@@ -262,7 +305,14 @@ function submit() {
           </div>
           <div class="form-group">
             <label class="form-label">{{ mode === 'edit' ? 'Additional stock out' : 'Stock out (used)' }}</label>
-            <input v-model.number="stockOut" type="number" min="0" class="form-input" />
+            <input
+              v-model.number="stockOut"
+              type="number"
+              min="0"
+              class="form-input"
+              :class="{ 'input-error': stockError }"
+            />
+            <span v-if="stockError" class="field-error">{{ stockError }}</span>
           </div>
         </div>
 
@@ -284,6 +334,11 @@ function submit() {
         <div class="preview-card">
           <div class="preview-title">Current Stock Preview</div>
           <div class="preview-equation">
+            <div class="eq-group" v-if="mode === 'edit'">
+              <span class="eq-label">On hand</span>
+              <span class="eq-value">{{ availableStock }}</span>
+            </div>
+            <div class="eq-operator" v-if="mode === 'edit'">+</div>
             <div class="eq-group">
               <span class="eq-label">Stock in</span>
               <span class="eq-value">{{ stockIn || 0 }}</span>
@@ -305,7 +360,7 @@ function submit() {
 
       <div class="modal-footer">
         <button class="btn-secondary" @click="close">Cancel</button>
-        <button class="btn-primary" :disabled="form.processing" @click="submit">
+        <button class="btn-primary" :disabled="form.processing || !!stockError" @click="submit">
           {{ mode === 'edit' ? 'Save changes' : 'Save item' }}
         </button>
       </div>
@@ -329,11 +384,15 @@ function submit() {
 .form-input::placeholder { color: #94a3b8; }
 .form-input:focus, .form-select:focus { border-color: #2563eb; box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1); }
 .form-input:disabled { border-color: #e2e8f0; }
+.form-input.input-error { border-color: #dc2626; }
+.form-input.input-error:focus { border-color: #dc2626; box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.1); }
+.field-error { font-family: system-ui, -apple-system, sans-serif; font-size: 12px; color: #dc2626; margin-top: 2px; }
 .section-divider { border: none; border-top: 1px solid #e2e8f0; margin: 14px 0 10px 0; }
-.section-title { font-family: system-ui, -apple-system, sans-serif; font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+.section-title { font-family: system-ui, -apple-system, sans-serif; font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+.available-stock-tag { font-size: 11px; font-weight: 600; color: #1e40af; text-transform: none; letter-spacing: normal; }
 .preview-card { background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
 .preview-title { font-family: system-ui, -apple-system, sans-serif; font-size: 11px; font-weight: 700; color: #1e40af; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-.preview-equation { display: flex; align-items: center; gap: 12px; font-family: system-ui, -apple-system, sans-serif; }
+.preview-equation { display: flex; align-items: center; gap: 12px; font-family: system-ui, -apple-system, sans-serif; flex-wrap: wrap; }
 .eq-group { display: flex; flex-direction: column; gap: 2px; }
 .eq-label { font-size: 11px; color: #2563eb; font-weight: 500; }
 .eq-value { font-size: 18px; font-weight: 700; color: #1e40af; line-height: 1.2; }

@@ -49,11 +49,32 @@ class PharmacyInventoryController extends Controller
         'by'                => 'nullable|string|max:255',
         'init_in'           => 'nullable|integer|min:0',
         'init_out'          => 'nullable|integer|min:0',
-        'quarter_delivered' => 'nullable|string|max:20', 
+        'quarter_delivered' => 'nullable|string|max:20',
     ]);
 
     $addedDate = $data['added_date'] ?? now()->toDateString();
     $performedBy = $data['by'] ?? 'System';
+
+    $initIn = (int) ($data['init_in'] ?? 0);
+    $initOut = (int) ($data['init_out'] ?? 0);
+
+    // Prevent stock out when there is no stock
+    if ($initIn === 0 && $initOut > 0) {
+        return back()
+            ->withErrors([
+                'init_out' => 'You cannot stock out an item that has no stock.'
+            ])
+            ->withInput();
+    }
+
+    // Prevent stock out greater than stock in
+    if ($initOut > $initIn) {
+        return back()
+            ->withErrors([
+                'init_out' => 'Initial stock out cannot be greater than the initial stock in.'
+            ])
+            ->withInput();
+    }
 
     $item = Item::create([
         'name'               => $data['name'],
@@ -68,36 +89,38 @@ class PharmacyInventoryController extends Controller
         'order_qty'          => 0,
         'notes'              => '',
         'added_date'         => $addedDate,
-        'quarter_delivered'  => $data['quarter_delivered'] ?? null, 
+        'quarter_delivered'  => $data['quarter_delivered'] ?? null,
     ]);
 
-    $initIn = $data['init_in'] ?? 0;
-    $initOut = $data['init_out'] ?? 0;
-
+    // Initial Stock In
     if ($initIn > 0) {
         $item->transactions()->create([
-            'type'         => 'in', 
-            'qty'          => $initIn, 
+            'type'         => 'in',
+            'qty'          => $initIn,
             'date'         => $addedDate,
-            'performed_by' => $performedBy, 
+            'performed_by' => $performedBy,
             'note'         => 'Initial stock in',
         ]);
     }
+
+    // Initial Stock Out
     if ($initOut > 0) {
         $item->transactions()->create([
-            'type'         => 'out', 
-            'qty'          => $initOut, 
+            'type'         => 'out',
+            'qty'          => $initOut,
             'date'         => $addedDate,
-            'performed_by' => $performedBy, 
+            'performed_by' => $performedBy,
             'note'         => 'Initial stock out',
         ]);
     }
+
+    // If both are zero, just record the item creation
     if ($initIn === 0 && $initOut === 0) {
         $item->transactions()->create([
-            'type'         => 'in', 
-            'qty'          => 0, 
+            'type'         => 'in',
+            'qty'          => 0,
             'date'         => $addedDate,
-            'performed_by' => $performedBy, 
+            'performed_by' => $performedBy,
             'note'         => 'Item added',
         ]);
     }
@@ -120,8 +143,32 @@ public function updateItem(Request $request, Item $item): RedirectResponse
         'fund'              => 'nullable|string|max:100',
         'add_in'            => 'nullable|integer|min:0',
         'add_out'           => 'nullable|integer|min:0',
-        'quarter_delivered' => 'nullable|string|max:20', 
+        'quarter_delivered' => 'nullable|string|max:20',
     ]);
+
+    $addIn = (int) ($data['add_in'] ?? 0);
+    $addOut = (int) ($data['add_out'] ?? 0);
+
+    // Current stock before this update
+    $currentStock = $item->stock;
+
+    // Prevent stock out if there is no stock
+    if ($currentStock <= 0 && $addOut > 0) {
+        return back()
+            ->withErrors([
+                'add_out' => 'You cannot stock out an item that has no stock.'
+            ])
+            ->withInput();
+    }
+
+    // Prevent stock out greater than available stock
+    if ($addOut > $currentStock) {
+        return back()
+            ->withErrors([
+                'add_out' => "Only {$currentStock} item(s) are available in stock."
+            ])
+            ->withInput();
+    }
 
     $item->update([
         'name'              => $data['name'],
@@ -137,25 +184,24 @@ public function updateItem(Request $request, Item $item): RedirectResponse
         'quarter_delivered' => $data['quarter_delivered'] ?? $item->quarter_delivered,
     ]);
 
-    $addIn = $data['add_in'] ?? 0;
-    $addOut = $data['add_out'] ?? 0;
     $today = now()->toDateString();
 
     if ($addIn > 0) {
         $item->transactions()->create([
-            'type'         => 'in', 
-            'qty'          => $addIn, 
+            'type'         => 'in',
+            'qty'          => $addIn,
             'date'         => $today,
-            'performed_by' => 'System', 
+            'performed_by' => 'System',
             'note'         => 'Stock in (edit)',
         ]);
     }
+
     if ($addOut > 0) {
         $item->transactions()->create([
-            'type'         => 'out', 
-            'qty'          => $addOut, 
+            'type'         => 'out',
+            'qty'          => $addOut,
             'date'         => $today,
-            'performed_by' => 'System', 
+            'performed_by' => 'System',
             'note'         => 'Stock out (edit)',
         ]);
     }
