@@ -9,37 +9,39 @@ use App\Models\Item;
 use App\Models\Transaction;
 use Illuminate\Http\Request;
 use Spatie\LaravelPdf\Facades\Pdf;
+use Illuminate\Support\Facades\DB;
 
 class TransferController extends Controller
 {
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'item_id' => 'required|exists:items,id',
-            'qty' => 'required|integer|min:1',
-            'destination' => 'required|string|max:255',
-            'remarks' => 'nullable|string|max:255',
-            'date' => 'required|date',
-        ]);
+   
 
-        $item = Item::findOrFail($validated['item_id']);
+public function store(Request $request)
+{
+    $validated = $request->validate([
+        'item_id' => 'required|exists:items,id',
+        'qty' => 'required|integer|min:1',
+        'destination' => 'required|string|max:255',
+        'remarks' => 'required|string|max:255', // now required, matches the UI
+        'date' => 'required|date',
+    ]);
 
-        // Check sufficient stock
-        $currentStock = $this->getCurrentStock($item);
-        if ($currentStock < $validated['qty']) {
-            return back()->withErrors(['qty' => 'Insufficient stock. Current stock: ' . $currentStock]);
-        }
+    $item = Item::findOrFail($validated['item_id']);
 
-        $noteParts = [
-            "Transfer",
-            $validated['date'],
-            "To: {$validated['destination']}",
-        ];
-        if (!empty($validated['remarks'])) {
-            $noteParts[] = $validated['remarks'];
-        }
+    $currentStock = $this->getCurrentStock($item);
+    if ($currentStock < $validated['qty']) {
+        return back()->withErrors(['qty' => 'Insufficient stock. Current stock: ' . $currentStock]);
+    }
 
-        // Create Out Transaction first so we can link it
+    $noteParts = [
+        "Transfer",
+        $validated['date'],
+        "To: {$validated['destination']}",
+    ];
+    if (!empty($validated['remarks'])) {
+        $noteParts[] = $validated['remarks'];
+    }
+
+    $transfer = DB::transaction(function () use ($item, $validated, $noteParts) {
         $transaction = Transaction::create([
             'item_id' => $item->id,
             'type' => 'out',
@@ -48,65 +50,68 @@ class TransferController extends Controller
             'note' => implode(' | ', $noteParts),
         ]);
 
-        // Create Transfer Record, linked to its transaction
-        $transfer = Transfer::create([
+        return Transfer::create([
             'item_id' => $validated['item_id'],
             'qty' => $validated['qty'],
             'destination' => $validated['destination'],
-            'remarks' => $validated['remarks'] ?? null,
+            'remarks' => $validated['remarks'],
             'date' => $validated['date'],
             'created_by' => auth()->id(),
-            'transaction_id' => $transaction->id,
+            'transaction_id' => $transaction->id, // make sure this is $fillable on Transfer!
         ]);
+    });
 
-        return redirect()->back()->with('success', 'Item transferred successfully.');
+    return redirect()->back()->with('success', 'Item transferred successfully.');
+}
+
+public function update(Request $request, Transfer $transfer)
+{
+    $validated = $request->validate([
+        'item_id' => 'required|exists:items,id',
+        'qty' => 'required|integer|min:1',
+        'destination' => 'required|string|max:255',
+        'remarks' => 'required|string|max:255',
+        'date' => 'required|date',
+    ]);
+
+    $newItem = Item::findOrFail($validated['item_id']);
+    $oldItem = $transfer->item_id == $validated['item_id']
+        ? $newItem
+        : Item::findOrFail($transfer->item_id);
+
+    if ($oldItem->id === $newItem->id) {
+        $stockExcludingThisTransfer = $this->getCurrentStock($newItem) + $transfer->qty;
+    } else {
+        $stockExcludingThisTransfer = $this->getCurrentStock($newItem);
     }
 
-    public function update(Request $request, Transfer $transfer)
-    {
-        $validated = $request->validate([
-            'item_id' => 'required|exists:items,id',
-            'qty' => 'required|integer|min:1',
-            'destination' => 'required|string|max:255',
-            'remarks' => 'nullable|string|max:255',
-            'date' => 'required|date',
+    if ($stockExcludingThisTransfer < $validated['qty']) {
+        return back()->withErrors([
+            'qty' => 'Insufficient stock. Available: ' . $stockExcludingThisTransfer,
         ]);
+    }
 
-        $newItem = Item::findOrFail($validated['item_id']);
-        $oldItem = $transfer->item_id == $validated['item_id']
-            ? $newItem
-            : Item::findOrFail($transfer->item_id);
+    $noteParts = [
+        "Transfer",
+        $validated['date'],
+        "To: {$validated['destination']}",
+    ];
+    if (!empty($validated['remarks'])) {
+        $noteParts[] = $validated['remarks'];
+    }
+    $note = implode(' | ', $noteParts);
 
-        // Figure out stock as if this transfer hadn't happened yet,
-        // then check if the new qty fits.
-        if ($oldItem->id === $newItem->id) {
-            // Same item: add back the old qty before checking the new one
-            $stockExcludingThisTransfer = $this->getCurrentStock($newItem) + $transfer->qty;
+    DB::transaction(function () use ($transfer, $validated, $note) {
+        // Only ever UPDATE the linked transaction. Never silently insert a
+        // second one — that's what was causing stock to double-deduct on
+        // every edit. If a transfer somehow has no linked transaction,
+        // that's a data problem to fix at the source (see note below),
+        // not something to paper over here.
+        if ($transfer->transaction_id) {
+            $transaction = Transaction::find($transfer->transaction_id);
         } else {
-            // Item changed: old item gets its stock back, new item is checked fresh
-            $stockExcludingThisTransfer = $this->getCurrentStock($newItem);
+            $transaction = null;
         }
-
-        if ($stockExcludingThisTransfer < $validated['qty']) {
-            return back()->withErrors([
-                'qty' => 'Insufficient stock. Available: ' . $stockExcludingThisTransfer,
-            ]);
-        }
-
-        $noteParts = [
-            "Transfer",
-            $validated['date'],
-            "To: {$validated['destination']}",
-        ];
-        if (!empty($validated['remarks'])) {
-            $noteParts[] = $validated['remarks'];
-        }
-        $note = implode(' | ', $noteParts);
-
-        // Update the linked Transaction (ledger entry) to match
-        $transaction = $transfer->transaction_id
-            ? Transaction::find($transfer->transaction_id)
-            : null;
 
         if ($transaction) {
             $transaction->update([
@@ -117,7 +122,9 @@ class TransferController extends Controller
                 'note' => $note,
             ]);
         } else {
-            // Fallback: no linked transaction found (e.g. legacy row), create one
+            // Genuine legacy row with no link at all — create exactly one
+            // and immediately re-link it so this never happens again for
+            // this transfer.
             $transaction = Transaction::create([
                 'item_id' => $validated['item_id'],
                 'type' => 'out',
@@ -127,18 +134,18 @@ class TransferController extends Controller
             ]);
         }
 
-        // Update the Transfer record itself
         $transfer->update([
             'item_id' => $validated['item_id'],
             'qty' => $validated['qty'],
             'destination' => $validated['destination'],
-            'remarks' => $validated['remarks'] ?? null,
+            'remarks' => $validated['remarks'],
             'date' => $validated['date'],
             'transaction_id' => $transaction->id,
         ]);
+    });
 
-        return redirect()->back()->with('success', 'Transfer updated successfully.');
-    }
+    return redirect()->back()->with('success', 'Transfer updated successfully.');
+}
 
     public function destroy(Transfer $transfer)
     {

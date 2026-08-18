@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { router } from '@inertiajs/vue3'
 
 const props = defineProps({
@@ -30,7 +30,6 @@ const remarkOptions = [
   'Others'
 ]
 
-
 const todayISO = () => {
   const d = new Date()
   const offset = d.getTimezoneOffset()
@@ -38,10 +37,29 @@ const todayISO = () => {
   return local.toISOString().split('T')[0]
 }
 
+// The actual value to submit — resolves "Others" to the free-text typed
+// into customRemarks, same as the edit modal.
+const resolvedRemarks = computed(() => {
+  if (form.value.remarks === 'Others') {
+    return customRemarks.value?.trim() || ''
+  }
+  return form.value.remarks?.trim() || ''
+})
+
+const canSubmit = computed(() => {
+  if (!form.value.destination?.trim()) return false
+  if (!form.value.date) return false
+  if (!form.value.qty || form.value.qty <= 0 || form.value.qty > props.currentStock) return false
+  if (!form.value.remarks) return false
+  if (form.value.remarks === 'Others' && !customRemarks.value?.trim()) return false
+  return true
+})
+
 const close = () => {
   emit('update:show', false)
   setTimeout(() => {
     form.value = { item_id: null, qty: 1, destination: '', remarks: '', date: '' }
+    customRemarks.value = ''
   }, 300)
 }
 
@@ -49,6 +67,7 @@ const submitTransfer = () => {
   if (!props.item) return
 
   const finalDestination = form.value.destination?.trim()
+  const finalRemarks = resolvedRemarks.value
 
   if (!finalDestination) {
     alert("Please enter a destination")
@@ -65,11 +84,16 @@ const submitTransfer = () => {
     return
   }
 
+  if (!finalRemarks) {
+    alert("Please select or specify remarks")
+    return
+  }
+
   router.post('/pharmacy/transfers', {
     item_id: form.value.item_id,
     qty: form.value.qty,
     destination: finalDestination,
-    remarks: form.value.remarks?.trim() || '',
+    remarks: finalRemarks, // now the resolved value, not the literal "Others"
     date: form.value.date,
   }, {
     preserveScroll: true,
@@ -85,6 +109,7 @@ watch(() => props.show, (isOpen) => {
     form.value.destination = ''
     form.value.remarks = ''
     form.value.date = todayISO()
+    customRemarks.value = ''
   }
 })
 </script>
@@ -133,7 +158,6 @@ watch(() => props.show, (isOpen) => {
             </option>
           </select>
 
-          <!-- Custom input when "Others" is selected -->
           <input
             v-if="form.remarks === 'Others'"
             v-model="customRemarks"
@@ -149,7 +173,7 @@ watch(() => props.show, (isOpen) => {
         <button 
           class="btn btn-primary" 
           @click="submitTransfer"
-          :disabled="form.qty > currentStock || form.qty <= 0 || !form.destination?.trim() || !form.date"
+          :disabled="!canSubmit"
         >
           Confirm Transfer
         </button>

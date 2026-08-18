@@ -10,9 +10,8 @@ class Transfer extends Model
     use HasFactory;
 
     protected $fillable = [
-        'item_id', 'qty', 'date',
-         'remarks', 'created_by', 'transferred_at', 'destination'
-    ];
+    'item_id', 'qty', 'destination', 'remarks', 'date', 'created_by', 'transaction_id',
+];
 
     protected $casts = [
         'date' => 'datetime',
