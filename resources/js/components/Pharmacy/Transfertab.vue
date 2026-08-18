@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import axios from 'axios'
 import PrintTransferModal from '@/components/Pharmacy/modals/Printtransfermodal.vue'
 import EditTransferModal from '@/components/Pharmacy/modals/EditTransferModal.vue'
+import ConfirmDeleteModal from '@/components/Pharmacy/modals/ConfirmDeleteModal.vue'
 
 const props = defineProps({
   transfers: { type: Array, default: () => [] },
@@ -24,6 +25,67 @@ const localTransfers = ref([...props.transfers])
 watch(() => props.transfers, (newVal) => {
   localTransfers.value = [...(newVal || [])]
 }, { deep: true, immediate: true })
+
+// --- Delete confirmation modal state (shared for transfers + print history) ---
+const showDeleteModal = ref(false)
+const deleteTarget = ref(null)   // { type: 'transfer' | 'history', record: {...} }
+const deleteLoading = ref(false)
+
+const deleteModalConfig = computed(() => {
+  if (!deleteTarget.value) return { title: '', message: '' }
+  if (deleteTarget.value.type === 'transfer') {
+    const t = deleteTarget.value.record
+    return {
+      title: 'Delete this transfer?',
+      message: `This will remove the transfer of ${t.qty} ${t.item_unit} — ${t.item_name}, and reverse its stock deduction. This cannot be undone.`
+    }
+  }
+  const r = deleteTarget.value.record
+  return {
+    title: 'Delete this print record?',
+    message: `This will permanently remove print history reference "${r.reference_id}". You won't be able to reprint it afterward.`
+  }
+})
+
+function askDeleteTransfer(transfer) {
+  deleteTarget.value = { type: 'transfer', record: transfer }
+  showDeleteModal.value = true
+}
+
+function askDeleteHistory(record) {
+  deleteTarget.value = { type: 'history', record }
+  showDeleteModal.value = true
+}
+
+function cancelDelete() {
+  deleteTarget.value = null
+}
+
+async function confirmDelete() {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+
+  try {
+    if (deleteTarget.value.type === 'transfer') {
+      const transfer = deleteTarget.value.record
+      await axios.delete(`/transfers/${transfer.id}`)
+      localTransfers.value = localTransfers.value.filter(t => t.id !== transfer.id)
+      emit('delete', transfer.raw)
+      emit('refresh')
+    } else {
+      const record = deleteTarget.value.record
+      await axios.delete(`/print-history/${record.id}`)
+      printHistory.value = printHistory.value.filter(r => r.id !== record.id)
+    }
+
+    showDeleteModal.value = false
+    deleteTarget.value = null
+  } catch (err) {
+    alert(err.response?.data?.message || 'Failed to delete. Please try again.')
+  } finally {
+    deleteLoading.value = false
+  }
+}
 
 // --- Print History state ---
 const printHistory = ref([])
@@ -157,19 +219,6 @@ function onUpdated(updatedRecord) {
   }
   emit('refresh')
 }
-
-async function onDelete(transfer) {
-  if (!confirm(`Delete transfer of ${transfer.qty} ${transfer.item_unit} — ${transfer.item_name}?`)) return
-
-  try {
-    await axios.delete(`/transfers/${transfer.id}`)
-    localTransfers.value = localTransfers.value.filter(t => t.id !== transfer.id)
-    emit('delete', transfer.raw)
-    emit('refresh')
-  } catch (err) {
-    alert(err.response?.data?.message || 'Failed to delete transfer.')
-  }
-}
 </script>
 
 <template>
@@ -236,11 +285,12 @@ async function onDelete(transfer) {
               <td class="item-name">{{ t.item_name }}</td>
               <td class="qty num">{{ t.qty }} <span class="unit">{{ t.item_unit }}</span></td>
               <td class="remarks">{{ t.remarks || '—' }}</td>
+              <!-- Transfers table row actions -->
               <td class="actions-col">
                 <button class="btn-action btn-edit" @click="onEdit(t)" title="Edit transfer">
                   ✏️ Edit
                 </button>
-                <button class="btn-action btn-delete" @click="onDelete(t)" title="Delete transfer">
+                <button class="btn-action btn-delete" @click="askDeleteTransfer(t)" title="Delete transfer">
                   🗑️
                 </button>
               </td>
@@ -287,6 +337,7 @@ async function onDelete(transfer) {
                 <span v-if="record.prepared_by_position" class="unit">({{ record.prepared_by_position }})</span>
               </td>
               <td class="date">{{ formatHistoryDate(record.printed_at) }}</td>
+              <!-- Print History table row actions -->
               <td class="actions-col">
                 <button
                   class="btn-action btn-edit"
@@ -295,6 +346,13 @@ async function onDelete(transfer) {
                   title="Reprint this report"
                 >
                   {{ reprintingId === record.id ? 'Preparing…' : '🖨️ Reprint' }}
+                </button>
+                <button
+                  class="btn-action btn-delete"
+                  @click="askDeleteHistory(record)"
+                  title="Delete this print record"
+                >
+                  🗑️
                 </button>
               </td>
             </tr>
@@ -331,6 +389,15 @@ async function onDelete(transfer) {
       :transfer="editingTransfer"
       :items="items"
       @updated="onUpdated"
+    />
+
+    <ConfirmDeleteModal
+      v-model:show="showDeleteModal"
+      :title="deleteModalConfig.title"
+      :message="deleteModalConfig.message"
+      :loading="deleteLoading"
+      @confirm="confirmDelete"
+      @cancel="cancelDelete"
     />
   </div>
 </template>

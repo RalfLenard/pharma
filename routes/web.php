@@ -44,6 +44,8 @@ Route::post('/transfers/{transfer}', [TransferController::class, 'update'])
     ->name('transfers.update');
 Route::delete('/transfers/{transfer}', [TransferController::class, 'destroy'])
     ->name('transfers.destroy');
+
+Route::delete('/print-history/{printTransfer}', [TransferController::class, 'destroyPrint']);
 Route::get('/firebase-test', function () {
     $database = Firebase::database();
 

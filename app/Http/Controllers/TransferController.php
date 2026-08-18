@@ -245,4 +245,11 @@ public function update(Request $request, Transfer $transfer)
 
         return $prefix . str_pad($nextNumber, 4, '0', STR_PAD_LEFT);
     }
+
+     public function destroyPrint(PrintTransfer $printTransfer)
+    {
+        $printTransfer->delete();
+
+        return response()->json(['message' => 'Print history record deleted.']);
+    }
 }
