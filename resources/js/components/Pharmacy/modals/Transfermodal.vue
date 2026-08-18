@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 
 const props = defineProps({
@@ -30,7 +30,6 @@ const remarkOptions = [
   'Others'
 ]
 
-
 const todayISO = () => {
   const d = new Date()
   const offset = d.getTimezoneOffset()
@@ -38,10 +37,20 @@ const todayISO = () => {
   return local.toISOString().split('T')[0]
 }
 
+// The value that actually gets submitted — resolves "Others" to the
+// free-text typed into customRemarks instead of the literal word "Others".
+const resolvedRemarks = computed(() => {
+  if (form.value.remarks === 'Others') {
+    return customRemarks.value?.trim() || ''
+  }
+  return form.value.remarks?.trim() || ''
+})
+
 const close = () => {
   emit('update:show', false)
   setTimeout(() => {
     form.value = { item_id: null, qty: 1, destination: '', remarks: '', date: '' }
+    customRemarks.value = ''
   }, 300)
 }
 
@@ -49,6 +58,7 @@ const submitTransfer = () => {
   if (!props.item) return
 
   const finalDestination = form.value.destination?.trim()
+  const finalRemarks = resolvedRemarks.value
 
   if (!finalDestination) {
     alert("Please enter a destination")
@@ -65,11 +75,21 @@ const submitTransfer = () => {
     return
   }
 
+  if (!form.value.remarks) {
+    alert("Please select remarks")
+    return
+  }
+
+  if (form.value.remarks === 'Others' && !finalRemarks) {
+    alert("Please specify remarks")
+    return
+  }
+
   router.post('/pharmacy/transfers', {
     item_id: form.value.item_id,
     qty: form.value.qty,
     destination: finalDestination,
-    remarks: form.value.remarks?.trim() || '',
+    remarks: finalRemarks, // <-- resolved value, not the literal "Others"
     date: form.value.date,
   }, {
     preserveScroll: true,
@@ -85,6 +105,7 @@ watch(() => props.show, (isOpen) => {
     form.value.destination = ''
     form.value.remarks = ''
     form.value.date = todayISO()
+    customRemarks.value = ''
   }
 })
 </script>
@@ -149,7 +170,7 @@ watch(() => props.show, (isOpen) => {
         <button 
           class="btn btn-primary" 
           @click="submitTransfer"
-          :disabled="form.qty > currentStock || form.qty <= 0 || !form.destination?.trim() || !form.date"
+          :disabled="form.qty > currentStock || form.qty <= 0 || !form.destination?.trim() || !form.date || !form.remarks || (form.remarks === 'Others' && !customRemarks?.trim())"
         >
           Confirm Transfer
         </button>
