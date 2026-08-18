@@ -147,16 +147,19 @@ public function update(Request $request, Transfer $transfer)
     return redirect()->back()->with('success', 'Transfer updated successfully.');
 }
 
-    public function destroy(Transfer $transfer)
+  public function destroy(Transfer $transfer)
     {
-        // Remove the linked ledger entry so stock isn't permanently reduced
-        if ($transfer->transaction_id) {
-            Transaction::where('id', $transfer->transaction_id)->delete();
-        }
+        DB::transaction(function () use ($transfer) {
+            // Remove the linked ledger entry too, otherwise stock stays
+            // deducted even though the transfer record is gone.
+            if ($transfer->transaction_id) {
+                Transaction::where('id', $transfer->transaction_id)->delete();
+            }
 
-        $transfer->delete();
+            $transfer->delete();
+        });
 
-        return redirect()->back()->with('success', 'Transfer deleted successfully.');
+        return response()->json(['message' => 'Transfer deleted successfully.']);
     }
 
     private function getCurrentStock($item)
