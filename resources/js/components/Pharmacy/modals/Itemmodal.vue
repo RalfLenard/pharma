@@ -14,6 +14,10 @@ const emit = defineEmits(['update:show'])
 // Local tracking string for the HTML date picker calendar element
 const quarterDeliveredDate = ref(localDateStr())
 
+// Free-text value typed in when "Other" is picked from the Fund Source dropdown
+const fundOther = ref('')
+const isFundOther = computed(() => form.fund === 'Other')
+
 const form = useForm({
   name: '', vol: '', brand: '', sec: '', lot: '', exp: '', min: 5,
   fund: '', unit: '', added_date: localDateStr(), by: '',
@@ -109,6 +113,11 @@ watch(() => form.added_date, (newDate) => {
   }
 })
 
+// Clear the custom fund-source text whenever the user switches away from "Other"
+watch(() => form.fund, (val) => {
+  if (val !== 'Other') fundOther.value = ''
+})
+
 watch(() => props.show, (visible) => {
   if (!visible) return
 
@@ -122,8 +131,18 @@ watch(() => props.show, (visible) => {
     form.exp = props.item.exp || ''
     form.min = props.item.min || 0
     form.order_qty = props.item.order_qty || 0
-    form.fund = props.item.fund || ''
     form.unit = props.item.unit || ''
+
+    // If the saved fund value isn't one of the known options, treat it as a
+    // custom "Other" value: select "Other" in the dropdown and pre-fill the
+    // free-text box with whatever was actually saved.
+    if (props.item.fund && !FUND_SOURCES.includes(props.item.fund)) {
+      form.fund = 'Other'
+      fundOther.value = props.item.fund
+    } else {
+      form.fund = props.item.fund || ''
+      fundOther.value = ''
+    }
 
     // Assign the saved quarter value from DB
     form.quarter_delivered = props.item.quarter_delivered || getQuarterFromDate(localDateStr())
@@ -146,6 +165,7 @@ watch(() => props.show, (visible) => {
     form.min = 5
     form.init_in = 0
     form.init_out = 0
+    fundOther.value = ''
   }
 }, { immediate: true })
 
@@ -160,10 +180,19 @@ function submit() {
     return
   }
 
+  if (isFundOther.value && !fundOther.value.trim()) {
+    alert('Please specify the fund source.')
+    return
+  }
+
   if (stockError.value) {
     // Guard against submitting an invalid stock-out value.
     return
   }
+
+  // Resolve the actual fund source to save: the typed custom value when
+  // "Other" is selected, otherwise whatever the dropdown holds.
+  const fundValue = isFundOther.value ? fundOther.value.trim() : form.fund
 
   if (props.mode === 'edit' && props.item) {
     form.transform((data) => ({
@@ -175,7 +204,7 @@ function submit() {
       exp: data.exp || null,
       min: data.min,
       order_qty: data.order_qty,
-      fund: data.fund,
+      fund: fundValue,
       unit: data.unit,
       add_in: data.add_in,
       add_out: data.add_out,
@@ -193,7 +222,7 @@ function submit() {
       lot: data.lot,
       exp: data.exp || null,
       min: data.min,
-      fund: data.fund,
+      fund: fundValue,
       unit: data.unit,
       added_date: data.added_date,
       by: data.by,
@@ -272,8 +301,16 @@ function submit() {
               <select v-model="form.fund" class="form-select">
                 <option value="">— select —</option>
                 <option v-for="f in FUND_SOURCES" :key="f" :value="f">{{ f }}</option>
+                <option value="Other">Other</option>
               </select>
             </div>
+          </div>
+        </div>
+
+        <div class="form-row full-width" v-if="isFundOther">
+          <div class="form-group">
+            <label class="form-label">Specify fund source *</label>
+            <input v-model="fundOther" type="text" class="form-input" placeholder="Enter fund source" />
           </div>
         </div>
 
