@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\DispenseController;
 use App\Http\Controllers\PharmacyInventoryController;
 use App\Http\Controllers\TransferController;
 use Illuminate\Support\Facades\Route;
@@ -9,7 +10,7 @@ use Kreait\Laravel\Firebase\Facades\Firebase;
 //   require __DIR__.'/pharmacy.php';
 // or copy the group below directly into web.php
 
-Route::middleware(['web', ])->prefix('/')->name('pharmacy.')->group(function () {
+Route::middleware(['web',])->prefix('/')->name('pharmacy.')->group(function () {
     Route::get('/', [PharmacyInventoryController::class, 'index'])->name('index');
 
     Route::post('/items', [PharmacyInventoryController::class, 'storeItem'])->name('items.store');
@@ -24,8 +25,13 @@ Route::middleware(['web', ])->prefix('/')->name('pharmacy.')->group(function () 
     Route::post('/wastage', [PharmacyInventoryController::class, 'storeWastage'])->name('wastage.store');
     Route::delete('/wastage/{wastageRecord}', [PharmacyInventoryController::class, 'destroyWastage'])->name('wastage.destroy');
 
+    //dispenses
+    Route::post('/dispenses', [DispenseController::class, 'store'])->name('dispenses.store');
+Route::put('/dispenses/{dispense}', [DispenseController::class, 'update'])->name('dispenses.update');
+Route::delete('/dispenses/{dispense}', [DispenseController::class, 'destroy'])->name('dispenses.destroy');
+
     Route::put('/settings', [PharmacyInventoryController::class, 'updateSettings'])->name('settings.update');
-   
+
 });
 Route::post('/pharmacy/transfers', [TransferController::class, 'store'])
     ->name('pharmacy.transfers.store');

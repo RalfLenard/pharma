@@ -11,6 +11,7 @@ import MonthlyReportTab from '@/components/Pharmacy/Monthlyreporttab.vue'
 import WastageTab from '@/components/Pharmacy/Wastagetab.vue'
 import PrintTab from '@/components/Pharmacy/Printtab.vue'
 import TransferTab from '@/components/Pharmacy/Transfertab.vue'
+import DispensesTab from '@/components/Pharmacy/Dispensestab.vue'
 
 import ItemModal from '@/components/Pharmacy/modals/Itemmodal.vue'
 import TxnModal from '@/components/Pharmacy/modals/Txnmodal.vue'
@@ -18,6 +19,7 @@ import WastageModal from '@/components/Pharmacy/modals/Wastagemodal.vue'
 import SettingsModal from '@/components/Pharmacy/modals/Settingsmodal.vue'
 import ArchiveModal from '@/components/Pharmacy/modals/Archivemodal.vue'
 import TransferModal from '@/components/Pharmacy/modals/Transfermodal.vue'
+import DispenseModal from '@/components/Pharmacy/modals/Dispensemodal.vue'
 
 const props = defineProps({
   items: { type: Array, required: true },
@@ -25,6 +27,7 @@ const props = defineProps({
   wastageRecords: { type: Array, required: true },
   transfers: { type: Array, default: () => [] },
   labSettings: { type: Object, required: true },
+  dispenses: { type: Array, default: () => [] },
 })
 
 /* ── tab + month state ── */
@@ -36,8 +39,11 @@ const tabs = [
   { key: 'wastage', label: 'Wastage' },
   { key: 'transfers', label: 'Transfers' },
   { key: 'print', label: 'Print' },
+  { key: 'dispenses', label: 'Dispenses' },
 ]
 const activeTab = ref('inventory')
+
+const dispenseModal = ref({ show: false })
 
 const now = new Date()
 const curYear = ref(now.getFullYear())
@@ -540,6 +546,7 @@ function openTransferModal(item) {
         <MonthlyReportTab v-else-if="activeTab === 'monthly'" :items="items" :transactions="transactions" :wastage-records="wastageRecords" :cur-key="curKey" :cur-year="curYear" :cur-month="curMonth" />
         <WastageTab v-else-if="activeTab === 'wastage'" :items="items" :wastage-records="wastageRecords" @add="wastageModal.show = true" />
        <TransferTab v-else-if="activeTab === 'transfers'" :items="items" :transfers="transfers" />
+       <DispensesTab v-else-if="activeTab === 'dispenses'" :dispenses="dispenses" @add="dispenseModal.show = true" />
         <PrintTab v-else-if="activeTab === 'print'" :items="items" :transactions="transactions" :cur-key="curKey" :lab-settings="labSettings" />
       </div>
     </div>
@@ -550,6 +557,7 @@ function openTransferModal(item) {
     <WastageModal v-model:show="wastageModal.show" :items="items" :transactions="transactions" :cur-key="curKey" />
     <SettingsModal v-model:show="settingsModal.show" :lab-settings="labSettings" />
     <ArchiveModal v-model:show="archiveModal.show" :item="archiveModal.item"  :items="items"/>
+    <DispenseModal v-model:show="dispenseModal.show" />
 
     <!-- Transfer Modal -->
     <TransferModal 

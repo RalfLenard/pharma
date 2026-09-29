@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Dispense;
 use App\Models\Item;
 use App\Models\LabSetting;
 use App\Models\Transaction;
@@ -28,6 +29,9 @@ class PharmacyInventoryController extends Controller
             'wastageRecords' => WastageRecord::orderBy('date')->get(),
              'transfers' => Transfer::latest()->get(),
             'labSettings' => LabSetting::current(),
+             'dispenses' => Dispense::with('dispenseItems.item:id,name,brand,vol,unit')
+        ->latest()
+        ->get(),
         ]);
     }
 
