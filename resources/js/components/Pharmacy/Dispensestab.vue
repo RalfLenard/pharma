@@ -23,6 +23,7 @@ function openEdit(d) {
 const q = ref('')
 const fPhil = ref('')
 const fMonth = ref('')
+const fItem = ref('')
 
 function ageOf(dob) {
   if (!dob) return '—'
@@ -57,6 +58,27 @@ const months = computed(() => {
     .map(([value, label]) => ({ value, label }))
 })
 
+/* items that actually appear in dispense records, for the filter dropdown */
+const itemOptions = computed(() => {
+  const map = new Map()
+  props.dispenses.forEach((d) => {
+    ;(d.dispense_items || []).forEach((l) => {
+      const key = String(l.item_id)
+      if (!map.has(key)) map.set(key, { value: key, label: l.item?.name || 'Deleted item', count: 0 })
+      map.get(key).count++
+    })
+  })
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label))
+})
+
+const hasFilters = computed(() => !!(q.value || fPhil.value || fMonth.value || fItem.value))
+function clearFilters() {
+  q.value = ''
+  fPhil.value = ''
+  fMonth.value = ''
+  fItem.value = ''
+}
+
 const rows = computed(() => {
   const s = q.value.trim().toLowerCase()
   return props.dispenses
@@ -67,17 +89,36 @@ const rows = computed(() => {
         || (d.dispense_by || '').toLowerCase().includes(s)
         || (d.received_by || '').toLowerCase().includes(s)
         || (d.philhealth_number || '').includes(s)
+        || (d.reference_no || '').toLowerCase().includes(s)
         || (d.dispense_items || []).some((l) => (l.item?.name || '').toLowerCase().includes(s))
       const mP = fPhil.value === '' || (fPhil.value === '1') === !!d.has_philhealth
       const mM = !fMonth.value || monthKeyOf(d.created_at) === fMonth.value
-      return mQ && mP && mM
+      const mI = !fItem.value || (d.dispense_items || []).some((l) => String(l.item_id) === fItem.value)
+      return mQ && mP && mM && mI
     })
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 })
 
-const totalQty = computed(() => rows.value.reduce((s, d) => s + (Number(d.qty) || 0), 0))
+// with an item filter, count only that item's quantity
+const totalQty = computed(() => rows.value.reduce((sum, d) => {
+  if (!fItem.value) return sum + (Number(d.qty) || 0)
+  return sum + (d.dispense_items || [])
+    .filter((l) => String(l.item_id) === fItem.value)
+    .reduce((x, l) => x + (Number(l.qty) || 0), 0)
+}, 0))
 const withPhil = computed(() => rows.value.filter((r) => r.has_philhealth).length)
 const withoutPhil = computed(() => rows.value.length - withPhil.value)
+
+/* ── print: opens the Blade slip in a new tab ── */
+/* ── print: fallback to relative URL if Ziggy route is missing ── */
+function printSlip(d) {
+  // Using route() with fallback:
+  try {
+    window.open(route('pharmacy.dispenses.print', d.id), '_blank')
+  } catch (e) {
+    window.open(`/pharmacy/dispenses/${d.id}/print`, '_blank')
+  }
+}
 
 function remove(d) {
   if (!confirm(`Delete dispense record for "${d.full_name}"?`)) return
@@ -90,7 +131,7 @@ function remove(d) {
     <!-- STATS -->
     <div class="stats">
       <div class="stat"><div class="stat-n">Records</div><div class="stat-v b">{{ rows.length }}</div></div>
-      <div class="stat"><div class="stat-n">Total qty dispensed</div><div class="stat-v a">{{ totalQty }}</div></div>
+      <div class="stat"><div class="stat-n">{{ fItem ? 'Qty of selected item' : 'Total qty dispensed' }}</div><div class="stat-v a">{{ totalQty }}</div></div>
       <div class="stat"><div class="stat-n">With PhilHealth</div><div class="stat-v g">{{ withPhil }}</div></div>
       <div class="stat"><div class="stat-n">Without PhilHealth</div><div class="stat-v r">{{ withoutPhil }}</div></div>
     </div>
@@ -111,6 +152,11 @@ function remove(d) {
           <option value="">All months</option>
           <option v-for="m in months" :key="m.value" :value="m.value">{{ m.label }}</option>
         </select>
+        <select v-model="fItem">
+          <option value="">All items</option>
+          <option v-for="i in itemOptions" :key="i.value" :value="i.value">{{ i.label }} ({{ i.count }})</option>
+        </select>
+        <button v-if="hasFilters" class="btn" style="color:var(--red);border-color:#fca5a5;" @click="clearFilters">&#10005; Clear filters</button>
       </div>
       <button class="btn primary" @click="openNew">+ New dispense</button>
     </div>
@@ -120,6 +166,7 @@ function remove(d) {
       <table>
         <thead>
           <tr>
+            <th>Ref No.</th>
             <th>Date</th>
             <th>Patient</th>
             <th>Brgy</th>
@@ -127,7 +174,6 @@ function remove(d) {
             <th>Sex</th>
             <th>PhilHealth</th>
             <th>Items</th>
-            <th class="num">Total Qty</th>
             <th>Dispensed By</th>
             <th>Received By</th>
             <th>Relationship</th>
@@ -139,6 +185,10 @@ function remove(d) {
             <td colspan="12" class="empty">No dispense records found.</td>
           </tr>
           <tr v-for="d in rows" :key="d.id">
+            <td class="nowrap">
+              <span class="ref-no">{{ d.reference_no || '—' }}</span>
+              <div v-if="d.print_count" class="sub">Printed ×{{ d.print_count }}</div>
+            </td>
             <td class="nowrap small">{{ fmtDate(d.created_at) }}</td>
             <td class="strong">{{ d.full_name }}</td>
             <td>{{ d.brgy || '—' }}</td>
@@ -151,18 +201,18 @@ function remove(d) {
               <div v-if="d.has_philhealth && d.philhealth_facility" class="sub">{{ d.philhealth_facility }}</div>
             </td>
             <td>
-              <div v-for="l in d.dispense_items || []" :key="l.id" class="line">
+              <div v-for="l in d.dispense_items || []" :key="l.id" class="line" :class="{ hit: fItem && String(l.item_id) === fItem }">
                 <span>{{ l.item?.name || 'Deleted item' }}</span>
                 <span class="qty">×{{ l.qty }}</span>
               </div>
               <span v-if="!(d.dispense_items || []).length" class="sub">—</span>
             </td>
-            <td class="num strong">{{ d.qty }}</td>
             <td>{{ d.dispense_by }}</td>
             <td>{{ d.received_by }}</td>
             <td>{{ d.receiver_relationship || '—' }}</td>
             <td class="nowrap">
-              <button class="btn sm" @click="openEdit(d)">Edit</button>
+              <button class="btn sm" @click="printSlip(d)">Print</button>
+              <button class="btn sm" style="margin-left:4px;" @click="openEdit(d)">Edit</button>
               <button class="btn sm danger" style="margin-left:4px;" @click="remove(d)">Delete</button>
             </td>
           </tr>
@@ -215,11 +265,13 @@ function remove(d) {
 .small { font-size:11px; }
 .strong { font-weight:600; }
 .sub { font-size:10px;color:var(--c2);margin-top:2px; }
+.ref-no { font-family:var(--fm);font-size:11px;font-weight:600;color:var(--accent); }
 .empty { text-align:center;padding:2.5rem;color:var(--c3);font-size:13px; }
 
 /* DISPENSED ITEM LINES */
 .line { display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:1px 0;min-width:170px; }
 .line .qty { font-weight:700;color:var(--accent); }
+.line.hit { background:var(--accent2);border-radius:4px;padding:1px 6px; }
 
 /* BADGES */
 .badge { display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px; }

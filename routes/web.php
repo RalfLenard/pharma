@@ -29,6 +29,8 @@ Route::middleware(['web',])->prefix('/')->name('pharmacy.')->group(function () {
     Route::post('/dispenses', [DispenseController::class, 'store'])->name('dispenses.store');
 Route::put('/dispenses/{dispense}', [DispenseController::class, 'update'])->name('dispenses.update');
 Route::delete('/dispenses/{dispense}', [DispenseController::class, 'destroy'])->name('dispenses.destroy');
+Route::get('/pharmacy/dispenses/{dispense}/print', [DispenseController::class, 'print'])
+    ->name('pharmacy.dispenses.print');
 
     Route::put('/settings', [PharmacyInventoryController::class, 'updateSettings'])->name('settings.update');
 

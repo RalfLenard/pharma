@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Dispense;
 use App\Models\Item;
 use App\Models\Transaction;
+use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -59,6 +60,25 @@ class DispenseController extends Controller
 
         return back()->with('success', 'Dispense record deleted.');
     }
+
+    /**
+     * Printable dispense slip (Blade view). Opens in a new browser tab.
+     */
+    public function print(Dispense $dispense): View
+{
+    $dispense->load('dispenseItems.item');
+
+    // keep a simple print history
+    $dispense->forceFill([
+        'printed_at'  => now(),
+        'print_count' => $dispense->print_count + 1,
+    ])->saveQuietly();
+
+    return view('Dispense', [
+        'dispense' => $dispense,
+        'labName'  => config('app.name'),
+    ]);
+}
 
     /* ───────────── Transaction log helpers ───────────── */
 
