@@ -30,11 +30,38 @@
         .sm { font-size: 10px; color: #555; }
         .total { text-align: right; font-weight: 700; margin-bottom: 26px; }
 
-        /* SIGNATURE SECTION UPDATES */
-        .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 50px; }
-        .sign-box { text-align: center; font-size: 12px; }
-        .sign-line { border-bottom: 1px solid #111; font-weight: 700; padding-bottom: 4px; margin-bottom: 4px; text-transform: capitalize; }
-        .sign-box small { display: block; color: #555; font-size: 10px; }
+        /* REVISED SIGNATURE SECTION STYLING */
+        .sign { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            gap: 24px; 
+            margin-top: 40px; 
+            page-break-inside: avoid;
+        }
+        .sign-box { 
+            text-align: center; 
+            font-size: 11px; 
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+        }
+        .sign-space {
+            min-height: 45px; /* Reserves clear space for physical signature */
+        }
+        .sign-line { 
+            border-bottom: 1px solid #111; 
+            font-weight: 700; 
+            padding-bottom: 4px; 
+            margin-bottom: 4px; 
+            text-transform: uppercase;
+            font-size: 11px;
+        }
+        .sign-box small { 
+            display: block; 
+            color: #555; 
+            font-size: 9.5px; 
+            line-height: 1.2;
+        }
 
         .foot { margin-top: 24px; font-size: 10px; color: #666; text-align: center; }
 
@@ -55,7 +82,7 @@
     <div class="sheet">
         <div class="head">
             <h1>CONCEPCION RURAL HEALTH UNIT I</h1>
-            <h2>Dispense Slip</h2>
+            <h2>Dispensing Slip</h2>
         </div>
 
         <div class="ref">
@@ -70,7 +97,7 @@
                 <span>Date of birth / Age</span>
                 <strong>
                     @if($dispense->date_of_birth)
-                        {{ $dispense->date_of_birth->format('M d, Y') }} ({{ $dispense->date_of_birth->age }} yrs)
+                        {{ $dispense->date_of_birth->format('M d, Y') }} ({{ $dispense->date_of_birth->age }} yrs old)
                     @else
                         —
                     @endif
@@ -102,7 +129,7 @@
                         <td>{{ $i + 1 }}</td>
                         <td>
                             {{ $line->item->name ?? 'Deleted item' }}
-                            @php $detail = collect([$line->item->brand ?? null, $line->item->vol ?? null])->filter()->implode(' · '); @endphp
+                            @php $detail = collect([$line->item->brand ?? null])->filter()->implode(' · '); @endphp
                             @if($detail)<div class="sm">{{ $detail }}</div>@endif
                         </td>
                         <td class="r">{{ $line->qty }}</td>
@@ -113,22 +140,26 @@
                 @endforelse
             </tbody>
         </table>
-        
 
-       
-
+        <!-- REVISED SIGNATURE SECTION -->
         <div class="sign">
             <div class="sign-box">
-                <div class="sign-line">{{ $dispense->dispense_by }}</div>
-                <small>Dispensed by (signature over printed name)</small>
+                <div class="sign-space"></div>
+                <div class="sign-line">{{ $dispense->dispense_by ?: '—' }}</div>
+                <small>Dispensed by<br>(signature over printed name)</small>
             </div>
             <div class="sign-box">
-                <div class="sign-line">{{ $dispense->received_by }}</div>
-                <small>Received by (signature over printed name)</small>
+                <div class="sign-space"></div>
+                <div class="sign-line">{{ $dispense->received_by ?: '—' }}</div>
+                <small>Received by<br>(signature over printed name)</small>
+            </div>
+            <div class="sign-box">
+                <div class="sign-space"></div>
+                <div class="sign-line">DIANA I. CUNANAN</div>
+                <small>Checked by<br>(signature over printed name)</small>
             </div>
         </div>
 
-      
     </div>
 
     <script>window.addEventListener('load', function () { window.print(); });</script>
