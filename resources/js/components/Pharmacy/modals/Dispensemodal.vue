@@ -12,6 +12,13 @@ const emit = defineEmits(['update:show'])
 
 const page = usePage()
 
+const DISPENSER_OPTIONS = [
+  'DIANA I. CUNANAN',
+  'JUSTINE GAIL T. PABALAN',
+  'MICAH LAINE L. SABALBIRINO',
+  'CRISTEL ANN B. CASTRO',
+]
+
 /* Use props if given, otherwise fall back to the Inertia page props (items / transactions) */
 const inventory = computed(() => (props.items?.length ? props.items : (page.props.items || [])))
 const txns = computed(() => (props.transactions?.length ? props.transactions : (page.props.transactions || [])))
@@ -303,7 +310,12 @@ function submit() {
         <div class="dm-grid">
           <div class="dm-f">
             <label>Dispensed by *</label>
-            <input v-model="form.dispense_by" type="text" required />
+            <select v-model="form.dispense_by" required>
+              <option value="" disabled>Select dispenser…</option>
+              <option v-for="name in DISPENSER_OPTIONS" :key="name" :value="name">
+                {{ name }}
+              </option>
+            </select>
             <small v-if="form.errors.dispense_by">{{ form.errors.dispense_by }}</small>
           </div>
           <div class="dm-f">

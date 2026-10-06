@@ -12,10 +12,40 @@
         .toolbar button { height: 32px; padding: 0 14px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; }
         .toolbar button.primary { background: #1e40af; border-color: #1e40af; color: #fff; }
 
-        .head { text-align: center; border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 14px; }
+        /* .head { text-align: center; border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 14px; }
         .head h1 { font-size: 16px; margin: 0 0 2px; }
-        .head h2 { font-size: 13px; margin: 0; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; }
-
+        .head h2 { font-size: 13px; margin: 0; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; } */
+     .head { 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; /* Group everything in the center */
+    gap: 16px;              /* Controls the space between logos and text (adjust as needed) */
+    border-bottom: 2px solid #111; 
+    padding-bottom: 10px; 
+    margin-bottom: 14px; 
+}
+.head-logo {
+    width: 50px; 
+    height: 50px; 
+    border-radius: 50%;
+    object-fit: contain;
+    flex-shrink: 0;         /* Prevents logos from shrinking on narrow screens */
+}
+.head-title {
+    text-align: center;
+    /* flex-grow removed so it stays compact */
+}
+.head-title h1 { 
+    font-size: 16px; 
+    margin: 0 0 2px; 
+}
+.head-title h2 { 
+    font-size: 13px; 
+    margin: 0; 
+    letter-spacing: .08em; 
+    text-transform: uppercase; 
+    font-weight: 600; 
+}
         .ref { display: flex; justify-content: space-between; margin-bottom: 12px; }
         .ref b { font-family: monospace; font-size: 13px; }
 
@@ -35,7 +65,6 @@
             display: grid; 
             grid-template-columns: repeat(3, 1fr); 
             gap: 24px; 
-            margin-top: 40px; 
             page-break-inside: avoid;
         }
         .sign-box { 
@@ -81,8 +110,12 @@
 
     <div class="sheet">
         <div class="head">
-            <h1>CONCEPCION RURAL HEALTH UNIT I</h1>
-            <h2>Dispensing Slip</h2>
+            <img src="/images/Picture3.png" alt="Logo Left" class="head-logo">
+            <div class="head-title">
+                <h1>CONCEPCION RURAL HEALTH UNIT I</h1>
+                <h2>Dispensing Slip</h2>
+            </div>
+            <img src="/images/Picture2.png" alt="Logo Right" class="head-logo">
         </div>
 
         <div class="ref">
@@ -146,18 +179,44 @@
             <div class="sign-box">
                 <div class="sign-space"></div>
                 <div class="sign-line">{{ $dispense->dispense_by ?: '—' }}</div>
-                <small>Dispensed by<br>(signature over printed name)</small>
-            </div>
-            <div class="sign-box">
-                <div class="sign-space"></div>
-                <div class="sign-line">{{ $dispense->received_by ?: '—' }}</div>
-                <small>Received by<br>(signature over printed name)</small>
+                <small>
+                    @switch($dispense->dispense_by)
+                        @case('DIANA I. CUNANAN')
+                            Pharmacist I
+                            @break
+                        @case('JUSTINE GAIL T. PABALAN')
+                            Nursing Attendant I
+                            @break
+                        @case('MICAH LAINE L. SABALBIRINO')
+                            Administrative Aide III
+                            @break
+                        @case('CRISTEL ANN B. CASTRO')
+                            Administrative Aide I
+                            @break
+                        @default
+                            Dispensed by
+                    @endswitch
+                </small>
             </div>
             <div class="sign-box">
                 <div class="sign-space"></div>
                 <div class="sign-line">DIANA I. CUNANAN</div>
-                <small>Checked by<br>(signature over printed name)</small>
+                <small> Pharmacist I</small>
             </div>
+            
+            <div class="sign-box">
+                <div class="sign-space"></div>
+                <div class="sign-line">
+                {{ $dispense->received_by ?: '—' }}
+                @if($dispense->received_by && $dispense->full_name && strtolower(trim($dispense->received_by)) !== strtolower(trim($dispense->full_name)))
+                    @if($dispense->receiver_relationship)
+                        ({{ $dispense->receiver_relationship }})
+                    @endif
+                @endif
+            </div>
+                <small>Received by</small>
+            </div>
+            
         </div>
 
     </div>
