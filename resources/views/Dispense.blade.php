@@ -75,12 +75,12 @@
             justify-content: flex-end;
         }
         .sign-space {
-            min-height: 45px; /* Reserves clear space for physical signature */
+            min-height: 15px; /* Reserves clear space for physical signature */
         }
         .sign-line { 
             border-bottom: 1px solid #111; 
             font-weight: 700; 
-            padding-bottom: 4px; 
+            /* padding-bottom: 4px;  */
             margin-bottom: 4px; 
             text-transform: uppercase;
             font-size: 11px;
@@ -92,7 +92,12 @@
             line-height: 1.2;
         }
 
-        .foot { margin-top: 24px; font-size: 10px; color: #666; text-align: center; }
+        .left{
+            text-align: left;
+            font-weight: 700;
+        }
+
+        /* .foot { margin-top: 24px; font-size: 10px; color: #666; text-align: center; } */
 
         @page { margin: 12mm; }
         @media print {
@@ -139,7 +144,7 @@
             <div><span>Sex</span><strong>{{ $dispense->sex ?: '—' }}</strong></div>
             <div>
                 <span>PhilHealth</span>
-                <strong>{{ $dispense->has_philhealth ? ($dispense->philhealth_number ?: 'Yes') : 'No' }}</strong>
+                <strong>{{ $dispense->has_philhealth ? ($dispense->philhealth_number ?: 'Yes') : 'None' }}</strong>
             </div>
             <div>
                 <span>PhilHealth facility</span>
@@ -152,8 +157,9 @@
                 <tr>
                     <th style="width:30px">#</th>
                     <th>Item</th>
-                    <th class="r" style="width:70px">Qty</th>
+                    
                     <th style="width:70px">Unit</th>
+                    <th class="r" style="width:70px">Qty</th>
                 </tr>
             </thead>
             <tbody>
@@ -165,8 +171,9 @@
                             @php $detail = collect([$line->item->brand ?? null])->filter()->implode(' · '); @endphp
                             @if($detail)<div class="sm">{{ $detail }}</div>@endif
                         </td>
-                        <td class="r">{{ $line->qty }}</td>
+                        
                         <td>{{ $line->item->unit ?? 'pcs' }}</td>
+                        <td class="r">{{ $line->qty }}</td>
                     </tr>
                 @empty
                     <tr><td colspan="4">No items</td></tr>
@@ -176,7 +183,9 @@
 
         <!-- REVISED SIGNATURE SECTION -->
         <div class="sign">
+            
             <div class="sign-box">
+                <p class="left">Dispensed By:</p>
                 <div class="sign-space"></div>
                 <div class="sign-line">{{ $dispense->dispense_by ?: '—' }}</div>
                 <small>
@@ -199,12 +208,14 @@
                 </small>
             </div>
             <div class="sign-box">
+                <p class="left">Checked By:</p>
                 <div class="sign-space"></div>
                 <div class="sign-line">DIANA I. CUNANAN</div>
                 <small> Pharmacist I</small>
             </div>
             
             <div class="sign-box">
+                <p class="left">Received By:</p>
                 <div class="sign-space"></div>
                 <div class="sign-line">
                 {{ $dispense->received_by ?: '—' }}
