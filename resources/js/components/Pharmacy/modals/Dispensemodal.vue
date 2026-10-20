@@ -63,6 +63,18 @@ function isExpired(item) {
   return !!item.exp && new Date(item.exp) < new Date()
 }
 
+/* ── expiration date formatting (e.g. "Mar 05, 2027") ── */
+function formatExp(exp) {
+  if (!exp) return ''
+  const [y, m, d] = String(exp).slice(0, 10).split('-').map(Number)
+  if (!y || !m || !d) return ''
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  })
+}
+
 /* ── searchable item list ── */
 const options = computed(() => {
   const s = search.value.trim().toLowerCase()
@@ -92,6 +104,7 @@ function addItem(o) {
     brand: o.item.brand || '',
     vol: o.item.vol || '',
     lot: o.item.lot || '',
+    exp: o.item.exp || '',
     unit: o.item.unit || 'pcs',
     stock: o.stock,
     qty: 1,
@@ -132,6 +145,7 @@ function fillFromRecord(d) {
       brand: inv.brand || '',
       vol: inv.vol || '',
       lot: inv.lot || '',
+      exp: inv.exp || '',
       unit: inv.unit || 'pcs',
       // stock already had this record's qty deducted, so add it back for editing
       stock: (stockMap.value.get(Number(l.item_id)) ?? 0) + Number(l.qty),
@@ -273,6 +287,9 @@ function submit() {
                 <span class="dm-opt-sub">
                   {{ [o.item.brand, o.item.vol, o.item.lot ? 'Lot ' + o.item.lot : ''].filter(Boolean).join(' · ') || '—' }}
                 </span>
+                <span v-if="o.item.exp" class="dm-exp" :class="{ expired: o.expired }">
+                  Exp: {{ formatExp(o.item.exp) }}
+                </span>
               </div>
               <span v-if="o.expired" class="dm-tag bad">Expired</span>
               <span v-else-if="o.stock <= 0" class="dm-tag bad">Out of stock</span>
@@ -294,6 +311,9 @@ function submit() {
               <span class="dm-opt-sub">
                 {{ [l.brand, l.vol, l.lot ? 'Lot ' + l.lot : ''].filter(Boolean).join(' · ') }}
                 <template v-if="[l.brand, l.vol, l.lot].some(Boolean)"> · </template>Available: {{ l.stock }} {{ l.unit }}
+              </span>
+              <span v-if="l.exp" class="dm-exp" :class="{ expired: isExpired(l) }">
+                Exp: {{ formatExp(l.exp) }}
               </span>
               <small v-if="form.errors['items.' + idx + '.qty']" class="dm-err">{{ form.errors['items.' + idx + '.qty'] }}</small>
             </div>
@@ -374,6 +394,8 @@ function submit() {
 .dm-opt-main { display:flex;flex-direction:column;min-width:0; }
 .dm-opt-main strong { font-size:12px; }
 .dm-opt-sub { font-size:11px;color:#64748b; }
+.dm-exp { font-size:11px;color:#b45309;font-weight:500; }
+.dm-exp.expired { color:#991b1b; }
 .dm-none { padding:14px;text-align:center;color:#94a3b8;font-size:12px; }
 .dm-tag { font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap; }
 .dm-tag.ok { background:#dcfce7;color:#166534; }
