@@ -32,6 +32,9 @@ Route::delete('/dispenses/{dispense}', [DispenseController::class, 'destroy'])->
 Route::get('/pharmacy/dispenses/{dispense}/print', [DispenseController::class, 'print'])
     ->name('pharmacy.dispenses.print');
 
+    Route::get('/pharmacy/dispenses/item-report', [DispenseController::class, 'itemReport'])
+    ->name('pharmacy.dispenses.item-report');
+
     Route::put('/settings', [PharmacyInventoryController::class, 'updateSettings'])->name('settings.update');
 
 });

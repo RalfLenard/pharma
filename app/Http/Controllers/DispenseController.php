@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Dispense;
 use App\Models\Item;
 use App\Models\Transaction;
+use Carbon\Carbon;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -65,20 +66,89 @@ class DispenseController extends Controller
      * Printable dispense slip (Blade view). Opens in a new browser tab.
      */
     public function print(Dispense $dispense): View
-{
-    $dispense->load('dispenseItems.item');
+    {
+        $dispense->load('dispenseItems.item');
 
-    // keep a simple print history
-    $dispense->forceFill([
-        'printed_at'  => now(),
-        'print_count' => $dispense->print_count + 1,
-    ])->saveQuietly();
+        // keep a simple print history
+        $dispense->forceFill([
+            'printed_at'  => now(),
+            'print_count' => $dispense->print_count + 1,
+        ])->saveQuietly();
 
-    return view('Dispense', [
-        'dispense' => $dispense,
-        'labName'  => config('app.name'),
-    ]);
-}
+        return view('Dispense', [
+            'dispense' => $dispense,
+            'labName'  => config('app.name'),
+        ]);
+    }
+
+    /**
+     * Landscape report: who received ONE specific item.
+     * GET ?item_id=1[&month=2026-10]
+     */
+    public function itemReport(Request $request): View
+    {
+        $v = $request->validate([
+            'item_id' => ['required', 'integer', 'exists:items,id'],
+            'month'   => ['nullable', 'regex:/^\d{4}-(0[1-9]|1[0-2])$/'],
+        ]);
+
+        $item  = Item::findOrFail($v['item_id']);
+        $month = $v['month'] ?? null;
+
+        // Full item name built from whatever fields exist (empty ones are skipped)
+        $fullName = collect([
+                $item->name,
+                $item->generic_name ?? null,
+                $item->brand ?? null,
+                $item->strength ?? $item->dosage ?? null,
+                $item->form ?? null,
+                $item->unit ?? null,
+            ])
+            ->filter()
+            ->unique()
+            ->implode(' ');
+
+        $dispenses = Dispense::query()
+            ->with(['dispenseItems' => fn ($q) => $q->where('item_id', $item->id)])
+            ->whereHas('dispenseItems', fn ($q) => $q->where('item_id', $item->id))
+            ->when($month, function ($q) use ($month) {
+                [$y, $m] = explode('-', $month);
+                $q->whereYear('created_at', $y)->whereMonth('created_at', $m);
+            })
+            ->orderBy('created_at')
+            ->get();
+
+        $rows = $dispenses->map(function (Dispense $d) {
+            $name         = trim((string) $d->full_name);
+            $receiver     = trim((string) $d->received_by);
+            $relationship = trim((string) $d->receiver_relationship);
+
+            // Did the patient pick it up personally?
+            $isPersonal = strcasecmp($name, $receiver) === 0
+                || in_array(strtolower($relationship), ['self', 'personal', 'patient'], true);
+
+            return [
+                'date'         => $d->created_at->format('M d, Y'),
+                'reference_no' => $d->reference_no ?: '—',
+                'patient'      => $name,
+                'age'          => $d->date_of_birth ? Carbon::parse($d->date_of_birth)->age : '—',
+                'brgy'         => $d->brgy ?: '—',
+                'qty'          => (int) $d->dispenseItems->sum('qty'),
+                'received_by'  => $isPersonal ? 'Personal' : $receiver,
+                'relationship' => $isPersonal ? '—' : ($relationship ?: '—'),
+            ];
+        });
+
+        return view('DispenseItemReport', [
+            'labName'    => config('app.name'),
+            'item'       => $item,
+            'itemName'   => $fullName,
+            'rows'       => $rows,
+            'totalQty'   => $rows->sum('qty'),
+            'monthLabel' => $month ? Carbon::createFromFormat('!Y-m', $month)->format('F Y') : 'All dates',
+            'generated'  => now()->format('M d, Y h:i A'),
+        ]);
+    }
 
     /* ───────────── Transaction log helpers ───────────── */
 

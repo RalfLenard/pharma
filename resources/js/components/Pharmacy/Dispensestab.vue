@@ -112,11 +112,27 @@ const withoutPhil = computed(() => rows.value.length - withPhil.value)
 /* ── print: opens the Blade slip in a new tab ── */
 /* ── print: fallback to relative URL if Ziggy route is missing ── */
 function printSlip(d) {
-  // Using route() with fallback:
   try {
     window.open(route('pharmacy.dispenses.print', d.id), '_blank')
   } catch (e) {
     window.open(`/pharmacy/dispenses/${d.id}/print`, '_blank')
+  }
+}
+
+/* ── item report: landscape list of who received the selected item ── */
+function printItemReport() {
+  if (!fItem.value) {
+    alert('Please select an item in the "All items" dropdown first.')
+    return
+  }
+  const params = { item_id: fItem.value }
+  if (fMonth.value) params.month = fMonth.value
+
+  try {
+    window.open(route('pharmacy.dispenses.item-report', params), '_blank')
+  } catch (e) {
+    const qs = new URLSearchParams(params).toString()
+    window.open(`/pharmacy/dispenses/item-report?${qs}`, '_blank')
   }
 }
 
@@ -158,7 +174,17 @@ function remove(d) {
         </select>
         <button v-if="hasFilters" class="btn" style="color:var(--red);border-color:#fca5a5;" @click="clearFilters">&#10005; Clear filters</button>
       </div>
-      <button class="btn primary" @click="openNew">+ New dispense</button>
+      <div class="tb-r">
+        <button
+          class="btn"
+          :class="{ 'btn-off': !fItem }"
+          title="Select an item first, then click"
+          @click="printItemReport"
+        >
+          &#128196; Item report (PDF)
+        </button>
+        <button class="btn primary" @click="openNew">+ New dispense</button>
+      </div>
     </div>
 
     <!-- TABLE -->
@@ -241,12 +267,14 @@ function remove(d) {
 /* TOOLBAR */
 .tb { display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap; }
 .tb-l { display:flex;gap:8px;flex:1;flex-wrap:wrap;align-items:center; }
+.tb-r { display:flex;gap:8px;align-items:center; }
 .sbox { position:relative;flex:1;min-width:220px;max-width:340px; }
 .sbox svg { position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--c3);pointer-events:none; }
 .sbox input { padding-left:32px;width:100%;box-sizing:border-box; }
 
 .btn { height:34px;padding:0 14px;border:1px solid var(--c5);border-radius:var(--r);background:var(--bg);color:var(--c);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500; }
 .btn:hover { background:var(--c6); }
+.btn-off { opacity:.55; }
 .btn.primary { background:var(--accent);color:#fff;border-color:var(--accent); }
 .btn.primary:hover { background:#1d3a98; }
 .btn.sm { height:26px;padding:0 8px;font-size:11px; }
