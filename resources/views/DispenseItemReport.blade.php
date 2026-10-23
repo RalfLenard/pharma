@@ -22,22 +22,17 @@
         }
 
         .head { text-align: center; margin-bottom: 14px; }
-        .head h1 { margin: 0; font-size: 18px; text-transform: uppercase; letter-spacing: .04em; }
-        .head h2 { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
         .item-name { margin-top: 6px; font-size: 15px; font-weight: 700; }
-        .meta { margin-top: 6px; font-size: 11px; color: #444; }
 
         table { width: 100%; border-collapse: collapse; }
         th, td { border: 1px solid #333; padding: 6px 8px; text-align: left; vertical-align: middle; }
         th { background: #e5e7eb; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
         td.c, th.c { text-align: center; }
         tr { page-break-inside: avoid; }
-        thead { display: table-header-group; }
+        thead { display: table-header-group; }   /* header repeats on each page */
 
-        tfoot td { font-weight: 700; background: #f3f4f6; }
+        tr.total td { font-weight: 700; background: #f3f4f6; }
         .empty { text-align: center; padding: 20px; color: #666; }
-
-        .foot { margin-top: 10px; font-size: 10px; color: #555; }
 
         @media print {
             .toolbar { display: none; }
@@ -51,9 +46,7 @@
     </div>
 
     <div class="head">
-       
         <div class="item-name">{{ $itemName }}</div>
-       
     </div>
 
     <table>
@@ -86,18 +79,16 @@
             @empty
                 <tr><td colspan="9" class="empty">No dispense records found for this item.</td></tr>
             @endforelse
-        </tbody>
-        @if ($rows->count())
-            <tfoot>
-                <tr>
+
+            {{-- Total: last row of the table, so it prints only once, on the last page --}}
+            @if ($rows->count())
+                <tr class="total">
                     <td colspan="6" style="text-align:right;">Total quantity</td>
                     <td class="c">{{ $totalQty }}</td>
                     <td colspan="2"></td>
                 </tr>
-            </tfoot>
-        @endif
+            @endif
+        </tbody>
     </table>
-
-   
 </body>
 </html>
