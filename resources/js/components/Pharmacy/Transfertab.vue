@@ -4,6 +4,7 @@ import axios from 'axios'
 import PrintTransferModal from '@/components/Pharmacy/modals/Printtransfermodal.vue'
 import EditTransferModal from '@/components/Pharmacy/modals/EditTransferModal.vue'
 import ConfirmDeleteModal from '@/components/Pharmacy/modals/ConfirmDeleteModal.vue'
+import Pagination from '@/components/Pharmacy/Pagination.vue'
 
 const props = defineProps({
   transfers: { type: Array, default: () => [] },
@@ -76,6 +77,12 @@ async function confirmDelete() {
       const record = deleteTarget.value.record
       await axios.delete(`/print-history/${record.id}`)
       printHistory.value = printHistory.value.filter(r => r.id !== record.id)
+      // if that was the last row on this page, step back (or reload to refill the page)
+      if (!printHistory.value.length && historyPage.value > 1) {
+        await loadPrintHistory(historyPage.value - 1)
+      } else {
+        await loadPrintHistory(historyPage.value)
+      }
     }
 
     showDeleteModal.value = false
@@ -87,12 +94,14 @@ async function confirmDelete() {
   }
 }
 
-// --- Print History state ---
+// --- Print History state (server-side pagination) ---
 const printHistory = ref([])
 const historyLoading = ref(false)
 const historyError = ref('')
 const historyPage = ref(1)
 const historyLastPage = ref(1)
+const historyPerPage = ref(15)
+const historyTotal = ref(0)
 const reprintingId = ref(null)
 
 async function loadPrintHistory(page = 1) {
@@ -103,6 +112,8 @@ async function loadPrintHistory(page = 1) {
     printHistory.value = data.data || []
     historyPage.value = data.current_page || 1
     historyLastPage.value = data.last_page || 1
+    historyPerPage.value = data.per_page || printHistory.value.length || 15
+    historyTotal.value = data.total ?? (historyLastPage.value * historyPerPage.value)
   } catch (err) {
     historyError.value = err.response?.data?.message || 'Failed to load print history.'
   } finally {
@@ -188,6 +199,22 @@ const filteredTransfers = computed(() => {
   )
 })
 
+/* ── Transfers pagination (works together with search) ── */
+const tPage = ref(1)
+const tPerPage = ref(20)
+
+const pagedTransfers = computed(() => {
+  const start = (tPage.value - 1) * tPerPage.value
+  return filteredTransfers.value.slice(start, start + tPerPage.value)
+})
+
+watch([searchQuery, tPerPage], () => { tPage.value = 1 })
+
+watch(() => filteredTransfers.value.length, (len) => {
+  const max = Math.max(1, Math.ceil(len / tPerPage.value))
+  if (tPage.value > max) tPage.value = max
+})
+
 function formatDate(date) {
   if (!date) return '—'
   const d = new Date(date)
@@ -230,10 +257,10 @@ function onUpdated(updatedRecord) {
       </div>
       <div class="header-actions">
         <div class="search-box" v-if="activeTab === 'transfers'">
-          <input 
-            v-model="searchQuery" 
-            type="text" 
-            placeholder="Search by item, reference, or remarks..." 
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Search by item, reference, or remarks..."
             class="search-input"
           />
         </div>
@@ -268,41 +295,53 @@ function onUpdated(updatedRecord) {
         <small>Transfers made from the Transfer modal will appear here.</small>
       </div>
 
-      <div v-else class="tbl-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Item</th>
-              <th class="num">Qty</th>
-              <th>Remarks</th>
-              <th class="actions-col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="t in filteredTransfers" :key="t.id" class="transfer-row">
-              <td class="date">{{ formatDate(t.created_at) }}</td>
-              <td class="item-name">{{ t.item_name }}</td>
-              <td class="qty num">{{ t.qty }} <span class="unit">{{ t.item_unit }}</span></td>
-              <td class="remarks">{{ t.remarks || '—' }}</td>
-              <!-- Transfers table row actions -->
-              <td class="actions-col">
-                <button class="btn-action btn-edit" @click="onEdit(t)" title="Edit transfer">
-                  ✏️ Edit
-                </button>
-                <button class="btn-action btn-delete" @click="askDeleteTransfer(t)" title="Delete transfer">
-                  🗑️
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <template v-else>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Item</th>
+                <th class="num">Qty</th>
+                <th>Remarks</th>
+                <th class="actions-col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!pagedTransfers.length">
+                <td colspan="5" class="empty-row">No transfers match your search.</td>
+              </tr>
+              <tr v-for="t in pagedTransfers" :key="t.id" class="transfer-row">
+                <td class="date">{{ formatDate(t.created_at) }}</td>
+                <td class="item-name">{{ t.item_name }}</td>
+                <td class="qty num">{{ t.qty }} <span class="unit">{{ t.item_unit }}</span></td>
+                <td class="remarks">{{ t.remarks || '—' }}</td>
+                <!-- Transfers table row actions -->
+                <td class="actions-col">
+                  <button class="btn-action btn-edit" @click="onEdit(t)" title="Edit transfer">
+                    ✏️ Edit
+                  </button>
+                  <button class="btn-action btn-delete" @click="askDeleteTransfer(t)" title="Delete transfer">
+                    🗑️
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <Pagination
+          v-model:page="tPage"
+          v-model:perPage="tPerPage"
+          :total="filteredTransfers.length"
+          label="transfers"
+        />
+      </template>
     </template>
 
-    <!-- Print History Tab -->
+    <!-- Print History Tab (server-side pagination) -->
     <template v-else>
-      <div v-if="historyLoading" class="empty-state">
+      <div v-if="historyLoading && !printHistory.length" class="empty-state">
         <p>Loading print history…</p>
       </div>
 
@@ -315,68 +354,61 @@ function onUpdated(updatedRecord) {
         <small>Reports generated from "Print Transfers" will appear here for reprinting.</small>
       </div>
 
-      <div v-else class="tbl-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Reference #</th>
-              <th>Period</th>
-              <th>Prepared By</th>
-              <th>Printed At</th>
-              <th class="actions-col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="record in printHistory" :key="record.id">
-              <td class="ref"><strong>{{ record.reference_id }}</strong></td>
-              <td class="date">
-                {{ formatHistoryDateShort(record.date_from) }} — {{ formatHistoryDateShort(record.date_to) }}
-              </td>
-              <td>
-                {{ record.prepared_by }}
-                <span v-if="record.prepared_by_position" class="unit">({{ record.prepared_by_position }})</span>
-              </td>
-              <td class="date">{{ formatHistoryDate(record.printed_at) }}</td>
-              <!-- Print History table row actions -->
-              <td class="actions-col">
-                <button
-                  class="btn-action btn-edit"
-                  @click="reprint(record)"
-                  :disabled="reprintingId === record.id"
-                  title="Reprint this report"
-                >
-                  {{ reprintingId === record.id ? 'Preparing…' : '🖨️ Reprint' }}
-                </button>
-                <button
-                  class="btn-action btn-delete"
-                  @click="askDeleteHistory(record)"
-                  title="Delete this print record"
-                >
-                  🗑️
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div class="pagination" v-if="historyLastPage > 1">
-          <button
-            class="btn btn-cancel"
-            :disabled="historyPage <= 1"
-            @click="loadPrintHistory(historyPage - 1)"
-          >
-            Previous
-          </button>
-          <span class="page-info">Page {{ historyPage }} of {{ historyLastPage }}</span>
-          <button
-            class="btn btn-cancel"
-            :disabled="historyPage >= historyLastPage"
-            @click="loadPrintHistory(historyPage + 1)"
-          >
-            Next
-          </button>
+      <template v-else>
+        <div class="tbl-wrap" :class="{ loading: historyLoading }">
+          <table>
+            <thead>
+              <tr>
+                <th>Reference #</th>
+                <th>Period</th>
+                <th>Prepared By</th>
+                <th>Printed At</th>
+                <th class="actions-col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="record in printHistory" :key="record.id">
+                <td class="ref"><strong>{{ record.reference_id }}</strong></td>
+                <td class="date">
+                  {{ formatHistoryDateShort(record.date_from) }} — {{ formatHistoryDateShort(record.date_to) }}
+                </td>
+                <td>
+                  {{ record.prepared_by }}
+                  <span v-if="record.prepared_by_position" class="unit">({{ record.prepared_by_position }})</span>
+                </td>
+                <td class="date">{{ formatHistoryDate(record.printed_at) }}</td>
+                <!-- Print History table row actions -->
+                <td class="actions-col">
+                  <button
+                    class="btn-action btn-edit"
+                    @click="reprint(record)"
+                    :disabled="reprintingId === record.id"
+                    title="Reprint this report"
+                  >
+                    {{ reprintingId === record.id ? 'Preparing…' : '🖨️ Reprint' }}
+                  </button>
+                  <button
+                    class="btn-action btn-delete"
+                    @click="askDeleteHistory(record)"
+                    title="Delete this print record"
+                  >
+                    🗑️
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-      </div>
+
+        <Pagination
+          :page="historyPage"
+          :per-page="historyPerPage"
+          :total="historyTotal"
+          :show-size="false"
+          label="print records"
+          @update:page="loadPrintHistory"
+        />
+      </template>
     </template>
 
     <PrintTransferModal
@@ -509,9 +541,11 @@ function onUpdated(updatedRecord) {
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  overflow: hidden;
+  overflow-x: auto;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: opacity 0.15s;
 }
+.tbl-wrap.loading { opacity: 0.55; pointer-events: none; }
 
 .tbl-wrap table {
   width: 100%;
@@ -528,7 +562,9 @@ function onUpdated(updatedRecord) {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
 }
+.tbl-wrap th.num { text-align: right; }
 
 .tbl-wrap td {
   padding: 14px 16px;
@@ -544,11 +580,14 @@ function onUpdated(updatedRecord) {
   background: #f8fafc;
 }
 
+.num { text-align: right; }
+.empty-row { text-align: center; padding: 2.5rem; color: #94a3b8; font-size: 13px; }
+
 /* Column Styles */
 .date { white-space: nowrap; color: #64748b; font-size: 13px; }
 .ref strong { font-family: ui-monospace, monospace; font-size: 13px; }
 .item-name { font-weight: 500; }
-.qty { font-weight: 600; color: #1e40af; }
+.qty { font-weight: 600; color: #1e40af; white-space: nowrap; }
 .unit { font-size: 12px; color: #94a3b8; font-weight: normal; }
 
 .remarks {
@@ -591,21 +630,6 @@ function onUpdated(updatedRecord) {
   color: #dc2626;
 }
 .btn-delete:hover { background: #fef2f2; }
-
-/* Pagination */
-.pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: 16px;
-  border-top: 1px solid #f1f5f9;
-}
-
-.page-info {
-  font-size: 13px;
-  color: #64748b;
-}
 
 .btn {
   padding: 8px 14px;

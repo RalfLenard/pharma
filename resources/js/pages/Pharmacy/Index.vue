@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Head, router } from '@inertiajs/vue3'
 import {
   MONTHS, monthKey, monthLabel, daysUntilExpiry, expLabel, parseLocalDate,
@@ -12,6 +12,7 @@ import WastageTab from '@/components/Pharmacy/Wastagetab.vue'
 import PrintTab from '@/components/Pharmacy/Printtab.vue'
 import TransferTab from '@/components/Pharmacy/Transfertab.vue'
 import DispensesTab from '@/components/Pharmacy/Dispensestab.vue'
+import StockCardTab from '@/components/Pharmacy/Stockcardtab.vue'
 
 import ItemModal from '@/components/Pharmacy/modals/Itemmodal.vue'
 import TxnModal from '@/components/Pharmacy/modals/Txnmodal.vue'
@@ -38,6 +39,7 @@ const tabs = [
   { key: 'monthly', label: 'Monthly Report' },
   { key: 'wastage', label: 'Wastage' },
   { key: 'transfers', label: 'Transfers' },
+  { key: 'stockcard', label: 'Stock Card' },
   { key: 'print', label: 'Print' },
   { key: 'dispenses', label: 'Dispenses' },
 ]
@@ -106,7 +108,7 @@ function clearAllFilters() {
   fDelivery.value = ''
 }
 
-/* ── FIXED Stock Calculations ── */
+/* ── Stock Calculations ── */
 function itemStockIn(item) {
   if (!item) return 0
   const initialIn = Number(item.init_in) || 0
@@ -173,9 +175,8 @@ const allHeaders = [
   { key: 'stock_in', label: 'Stock In', col: 'stockio', num: true },
   { key: 'stock_out', label: 'Stock Out', col: 'stockio', num: true },
   { key: 'current_stock', label: 'Current Stock', always: true, num: true },
-  // { key: 'order_qty', label: 'On Order', col: 'order_qty', num: true },
   { key: 'status', label: 'Status', always: true },
-  { key: 'actions', label: 'Actions', always: true },
+  { key: 'actions', label: 'Actions', always: true, actions: true },
 ]
 
 const inventoryHeaders = computed(() => allHeaders.filter((h) => h.always || columns.value[h.col]))
@@ -190,9 +191,18 @@ function handleOutsideClick(e) {
   if (filterBarRef.value && !filterBarRef.value.contains(e.target)) {
     showColumns.value = false
   }
+  closeDotMenus()
 }
-onMounted(() => document.addEventListener('click', handleOutsideClick))
-onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
+onMounted(() => {
+  document.addEventListener('click', handleOutsideClick)
+  window.addEventListener('scroll', closeDotMenus, true)
+  window.addEventListener('resize', closeDotMenus)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', handleOutsideClick)
+  window.removeEventListener('scroll', closeDotMenus, true)
+  window.removeEventListener('resize', closeDotMenus)
+})
 
 /* Filtered Items */
 const SEC_ORDER = [
@@ -227,9 +237,58 @@ const filteredItems = computed(() => [...filteredItemsUnpaged.value].sort((a, b)
   return si !== 0 ? si : a.name.localeCompare(b.name)
 }))
 
+/* ── Pagination (works together with search + filters) ── */
+const perPageOptions = [20, 50, 100]
+const perPage = ref(20)
+const currentPage = ref(1)
+const tableTopRef = ref(null)
+
+const totalItems = computed(() => filteredItems.value.length)
+const totalPages = computed(() => Math.max(1, Math.ceil(totalItems.value / perPage.value)))
+
+const pagedItems = computed(() => {
+  const start = (currentPage.value - 1) * perPage.value
+  return filteredItems.value.slice(start, start + perPage.value)
+})
+
+const rangeStart = computed(() => (totalItems.value === 0 ? 0 : (currentPage.value - 1) * perPage.value + 1))
+const rangeEnd = computed(() => Math.min(currentPage.value * perPage.value, totalItems.value))
+
+const pageNumbers = computed(() => {
+  const total = totalPages.value
+  const cur = currentPage.value
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages = [1]
+  const start = Math.max(2, cur - 1)
+  const end = Math.min(total - 1, cur + 1)
+  if (start > 2) pages.push('…')
+  for (let p = start; p <= end; p++) pages.push(p)
+  if (end < total - 1) pages.push('…')
+  pages.push(total)
+  return pages
+})
+
+function goToPage(p) {
+  if (typeof p !== 'number') return
+  const next = Math.min(Math.max(1, p), totalPages.value)
+  if (next === currentPage.value) return
+  currentPage.value = next
+  tableTopRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// Any search / filter / page-size change jumps back to page 1
+watch([searchQuery, fSec, fStatus, fFund, fDelivery, perPage], () => {
+  currentPage.value = 1
+})
+
+// If data shrinks (archive, delete…) and the current page no longer exists
+watch(totalPages, (n) => {
+  if (currentPage.value > n) currentPage.value = n
+})
+
 function isFirstInSection(index) {
   if (index === 0) return true
-  return filteredItems.value[index].sec !== filteredItems.value[index - 1].sec
+  return pagedItems.value[index].sec !== pagedItems.value[index - 1].sec
 }
 
 /* Expiry Alerts */
@@ -268,9 +327,21 @@ function permanentDeleteItem(item) {
   router.delete(route('pharmacy.items.destroy', item.id), { preserveScroll: true })
 }
 
+/* Row action menu — positioned with `fixed` so the scrollable table never clips it */
+const MENU_W = 176
+const MENU_H = 236
 const openMenuId = ref(null)
-function toggleDotMenu(id) {
-  openMenuId.value = openMenuId.value === id ? null : id
+const menuStyle = ref({})
+
+function toggleDotMenu(id, e) {
+  if (openMenuId.value === id) { closeDotMenus(); return }
+  const r = e.currentTarget.getBoundingClientRect()
+  const left = Math.max(8, Math.min(r.right - MENU_W, window.innerWidth - MENU_W - 8))
+  const openUp = r.bottom + MENU_H + 8 > window.innerHeight && r.top > MENU_H
+  menuStyle.value = openUp
+    ? { left: `${left}px`, bottom: `${window.innerHeight - r.top + 4}px` }
+    : { left: `${left}px`, top: `${r.bottom + 4}px` }
+  openMenuId.value = id
 }
 function closeDotMenus() {
   openMenuId.value = null
@@ -281,7 +352,6 @@ const archivedItems = computed(() => props.items.filter((i) => i.archived))
 
 const transferModal = ref({ show: false, item: null })
 
-// Add this function
 function openTransferModal(item) {
   transferModal.value = { show: true, item }
 }
@@ -394,7 +464,6 @@ function openTransferModal(item) {
                 <label><input type="checkbox" v-model="columns.exp"> Expiry</label>
                 <label><input type="checkbox" v-model="columns.lot"> Lot Number</label>
                 <label><input type="checkbox" v-model="columns.stockio"> Stock In / Out</label>
-              
               </div>
             </div>
           </div>
@@ -404,14 +473,13 @@ function openTransferModal(item) {
             <button class="btn">Backup</button>
             <button class="btn">Restore</button>
             <button class="btn" :style="showArchived ? 'background:var(--accent2)' : ''" @click="showArchived = !showArchived">Archived</button>
-            <!-- <button class="btn">On Order</button> -->
             <button class="btn primary" @click="openAddItem">+ Add item</button>
           </div>
         </div>
 
         <!-- COLLAPSIBLE FILTER PANEL -->
-        <div class="filter-panel" style="margin-bottom:14px;">
-          <div v-show="filterPanelOpen" class="filter-panel-body" style="display:flex;">
+        <div class="filter-panel" style="margin-bottom:14px;" v-show="filterPanelOpen">
+          <div class="filter-panel-body" style="display:flex;">
             <select v-model="fSec">
               <option value="">All sections</option>
               <option v-for="s in sections" :key="s" :value="s">{{ s }}</option>
@@ -436,69 +504,103 @@ function openTransferModal(item) {
           </div>
         </div>
 
-        <div class="tbl-wrap">
+        <!-- INVENTORY TABLE -->
+        <div ref="tableTopRef" class="tbl-anchor"></div>
+        <div class="tbl-wrap inv-table">
           <table>
             <thead>
               <tr>
-                <th v-for="h in inventoryHeaders" :key="h.key" :class="{ num: h.num }">{{ h.label }}</th>
+                <th
+                  v-for="h in inventoryHeaders" :key="h.key"
+                  :class="{ num: h.num, 'col-actions': h.actions }"
+                >{{ h.label }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="!filteredItems.length">
+              <tr v-if="!pagedItems.length">
                 <td :colspan="inventoryHeaders.length" class="empty">No items match your filters.</td>
               </tr>
 
-              <template v-else v-for="(item, index) in filteredItems" :key="item.id">
-                <tr v-if="isFirstInSection(index)" class="sec-row">
-                  <td :colspan="inventoryHeaders.length">{{ item.sec || 'Unassigned' }}</td>
-                </tr>
-                <tr>
-                  <td style="font-weight:500;max-width:170px;white-space:normal;">{{ item.name }}</td>
-                  <td v-if="isColVisible('vol')" style="color:var(--c2);font-size:12px;">{{ item.vol || '—' }}</td>
-                  <td v-if="isColVisible('brand')" style="font-weight:500;">{{ item.brand || '—' }}</td>
-                  <td v-if="isColVisible('sec')"><span class="b-sec">{{ item.sec || '—' }}</span></td>
-                  <td v-if="isColVisible('fund')">
-                    <span v-if="item.fund" class="b-fund">{{ item.fund }}</span>
-                    <span v-else style="color:var(--c4);font-size:11px;">—</span>
-                  </td>
-                  <td v-if="isColVisible('added_date')" style="font-size:11px;white-space:nowrap;">{{ item.added_date || '—' }}</td>
-                   <td v-if="isColVisible('quarter_delivered')" style="font-size:11px;white-space:nowrap;">{{ item.quarter_delivered || '—' }}</td>
-                  <td v-if="isColVisible('lot')" style="font-size:11px;font-family:var(--fm);color:var(--c2);">{{ item.lot || '—' }}</td>
-                  <td v-if="isColVisible('exp')">
-                    <div class="exp-cell">
-                      <span>{{ item.exp || '—' }}</span>
-                    </div>
-                  </td>
-                  <td v-if="isColVisible('stockio')" class="num"><span class="badge b-in">+{{ itemStockIn(item) }}</span></td>
-                  <td v-if="isColVisible('stockio')" class="num"><span class="badge b-out">&#8722;{{ itemStockOut(item) }}</span></td>
-                  <td class="num" :style="itemStock(item) === 0 ? 'color:var(--red);font-weight:700;' : itemStock(item) <= (item.min||0) ? 'color:var(--amber);font-weight:700;' : 'font-weight:600;'">
-                    {{ itemStock(item) }} <span style="font-size:12px;color:#64748b;">{{ item.unit || 'pcs' }}</span>
-                  </td>
-                 
-                  <td><span class="badge" :class="STATUS_BADGE_CLASS[itemStatus(item)]">{{ STATUS_LABEL[itemStatus(item)] }}</span></td>
-                  <td style="white-space:nowrap;">
-                    <div class="dot-menu-wrap">
-                      <button class="dot-menu-btn" @click.stop="toggleDotMenu(item.id)" title="Actions">&#8943;</button>
-                      <div class="dot-menu" :class="{ open: openMenuId === item.id }" @click="closeDotMenus">
-                        <button class="dm-in" @click="openTxn(item.id, 'in')">&#43; Stock In</button>
-                        <button class="dm-out" @click="openTxn(item.id, 'out')">&#8722; Stock Out</button>
-                        <button class="dm-transfer" @click="openTransferModal(item)">
-                          ↔ Transfer Item
-                        </button>
-                        <hr class="dot-menu-sep">
-                        <button @click="openEditItem(item)">&#9998; Edit item</button>
-                        <button class="dm-archive" @click="openArchiveItem(item)">&#128451; Archive item</button>
-                        <hr class="dot-menu-sep">
-                        <button class="dm-del" @click="permanentDeleteItem(item)">&#128465; Delete permanently</button>
+              <template v-else>
+                <template v-for="(item, index) in pagedItems" :key="item.id">
+                  <tr v-if="isFirstInSection(index)" class="sec-row">
+                    <td :colspan="inventoryHeaders.length"><span class="sec-label">{{ item.sec || 'Unassigned' }}</span></td>
+                  </tr>
+                  <tr>
+                    <td class="col-name">{{ item.name }}</td>
+                    <td v-if="isColVisible('vol')" class="c-muted">{{ item.vol || '—' }}</td>
+                    <td v-if="isColVisible('brand')" class="c-strong">{{ item.brand || '—' }}</td>
+                    <td v-if="isColVisible('sec')"><span class="b-sec">{{ item.sec || '—' }}</span></td>
+                    <td v-if="isColVisible('fund')">
+                      <span v-if="item.fund" class="b-fund">{{ item.fund }}</span>
+                      <span v-else style="color:var(--c4);font-size:11px;">—</span>
+                    </td>
+                    <td v-if="isColVisible('added_date')" class="c-small">{{ item.added_date || '—' }}</td>
+                    <td v-if="isColVisible('quarter_delivered')" class="c-small">{{ item.quarter_delivered || '—' }}</td>
+                    <td v-if="isColVisible('lot')" class="c-small c-mono">{{ item.lot || '—' }}</td>
+                    <td v-if="isColVisible('exp')" class="c-small">{{ item.exp || '—' }}</td>
+                    <td v-if="isColVisible('stockio')" class="num"><span class="badge b-in">+{{ itemStockIn(item) }}</span></td>
+                    <td v-if="isColVisible('stockio')" class="num"><span class="badge b-out">&#8722;{{ itemStockOut(item) }}</span></td>
+                    <td class="num" :style="itemStock(item) === 0 ? 'color:var(--red);font-weight:700;' : itemStock(item) <= (item.min||0) ? 'color:var(--amber);font-weight:700;' : 'font-weight:600;'">
+                      {{ itemStock(item) }} <span style="font-size:12px;color:#64748b;">{{ item.unit || 'pcs' }}</span>
+                    </td>
+                    <td><span class="badge" :class="STATUS_BADGE_CLASS[itemStatus(item)]">{{ STATUS_LABEL[itemStatus(item)] }}</span></td>
+                    <td class="col-actions">
+                      <div class="dot-menu-wrap">
+                        <button class="dot-menu-btn" @click.stop="toggleDotMenu(item.id, $event)" title="Actions">&#8943;</button>
+                        <div
+                          v-if="openMenuId === item.id"
+                          class="dot-menu open"
+                          :style="menuStyle"
+                          @click.stop="closeDotMenus"
+                        >
+                          <button class="dm-in" @click="openTxn(item.id, 'in')">&#43; Stock In</button>
+                          <button class="dm-out" @click="openTxn(item.id, 'out')">&#8722; Stock Out</button>
+                          <button class="dm-transfer" @click="openTransferModal(item)">&#8596; Transfer Item</button>
+                          <hr class="dot-menu-sep">
+                          <button @click="openEditItem(item)">&#9998; Edit item</button>
+                          <button class="dm-archive" @click="openArchiveItem(item)">&#128451; Archive item</button>
+                          <hr class="dot-menu-sep">
+                          <button class="dm-del" @click="permanentDeleteItem(item)">&#128465; Delete permanently</button>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+                </template>
               </template>
             </tbody>
           </table>
         </div>
 
+        <!-- PAGINATION BAR -->
+        <div class="pager">
+          <div class="pager-info">
+            Showing <strong>{{ rangeStart }}–{{ rangeEnd }}</strong> of <strong>{{ totalItems }}</strong> items
+          </div>
+
+          <div class="pager-nav" v-if="totalPages > 1">
+            <button class="pg-btn" :disabled="currentPage === 1" @click="goToPage(1)" title="First page">&laquo;</button>
+            <button class="pg-btn" :disabled="currentPage === 1" @click="goToPage(currentPage - 1)" title="Previous page">&lsaquo;</button>
+            <button
+              v-for="(p, i) in pageNumbers" :key="`${p}-${i}`"
+              class="pg-btn"
+              :class="{ on: p === currentPage, gap: p === '…' }"
+              :disabled="p === '…'"
+              @click="goToPage(p)"
+            >{{ p }}</button>
+            <button class="pg-btn" :disabled="currentPage === totalPages" @click="goToPage(currentPage + 1)" title="Next page">&rsaquo;</button>
+            <button class="pg-btn" :disabled="currentPage === totalPages" @click="goToPage(totalPages)" title="Last page">&raquo;</button>
+          </div>
+
+          <label class="pager-size">
+            Rows per page
+            <select v-model.number="perPage">
+              <option v-for="n in perPageOptions" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </label>
+        </div>
+
+        <!-- ARCHIVED -->
         <div v-if="showArchived" class="arch-section">
           <div class="arch-head">
             <span style="display:flex;align-items:center;gap:6px;">
@@ -518,7 +620,7 @@ function openTransferModal(item) {
               <tbody>
                 <tr v-if="!archivedItems.length"><td colspan="11" class="empty">No archived items.</td></tr>
                 <tr v-else v-for="item in archivedItems" :key="item.id">
-                  <td style="font-weight:500;">{{ item.name }}</td>
+                  <td class="col-name">{{ item.name }}</td>
                   <td>{{ item.vol || '—' }}</td>
                   <td>{{ item.brand || '—' }}</td>
                   <td><span class="b-sec">{{ item.sec || '—' }}</span></td>
@@ -545,8 +647,9 @@ function openTransferModal(item) {
         <TxnLogTab v-else-if="activeTab === 'log'" :items="items" :transactions="transactions" @stock="openTxn" />
         <MonthlyReportTab v-else-if="activeTab === 'monthly'" :items="items" :transactions="transactions" :wastage-records="wastageRecords" :cur-key="curKey" :cur-year="curYear" :cur-month="curMonth" />
         <WastageTab v-else-if="activeTab === 'wastage'" :items="items" :wastage-records="wastageRecords" @add="wastageModal.show = true" />
-       <TransferTab v-else-if="activeTab === 'transfers'" :items="items" :transfers="transfers" />
-       <DispensesTab v-else-if="activeTab === 'dispenses'" :dispenses="dispenses" @add="dispenseModal.show = true" />
+        <TransferTab v-else-if="activeTab === 'transfers'" :items="items" :transfers="transfers" />
+        <DispensesTab v-else-if="activeTab === 'dispenses'" :dispenses="dispenses" :items="items" :transactions="transactions" :lab-settings="labSettings" @add="dispenseModal.show = true" />
+        <StockCardTab v-else-if="activeTab === 'stockcard'" :items="items" :transactions="transactions" :transfers="transfers" :lab-settings="labSettings" />
         <PrintTab v-else-if="activeTab === 'print'" :items="items" :transactions="transactions" :cur-key="curKey" :lab-settings="labSettings" />
       </div>
     </div>
@@ -556,12 +659,12 @@ function openTransferModal(item) {
     <TxnModal v-model:show="txnModal.show" :items="items" :transactions="transactions" :item-id="txnModal.itemId" :type="txnModal.type" />
     <WastageModal v-model:show="wastageModal.show" :items="items" :transactions="transactions" :cur-key="curKey" />
     <SettingsModal v-model:show="settingsModal.show" :lab-settings="labSettings" />
-    <ArchiveModal v-model:show="archiveModal.show" :item="archiveModal.item"  :items="items"/>
+    <ArchiveModal v-model:show="archiveModal.show" :item="archiveModal.item" :items="items" />
     <DispenseModal v-model:show="dispenseModal.show" />
 
     <!-- Transfer Modal -->
-    <TransferModal 
-      v-model:show="transferModal.show" 
+    <TransferModal
+      v-model:show="transferModal.show"
       :item="transferModal.item"
       :current-stock="transferModal.item ? itemStock(transferModal.item) : 0"
     />
@@ -596,10 +699,10 @@ function openTransferModal(item) {
 .pharm-app :deep(input:focus),
 .pharm-app :deep(select:focus) { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(30,64,175,.1); }
 
-.wrap { max-width: 1400px; margin: 0 auto; padding: 16px; }
+.wrap { max-width: 1600px; margin: 0 auto; padding: 16px; }
 
 /* TOPBAR */
-.topbar { display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--c5);position:sticky;top:0;z-index:50; }
+.topbar { display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--c5);position:sticky;top:0;z-index:50;gap:12px;flex-wrap:wrap; }
 .topbar-left { display:flex;align-items:center;gap:14px; }
 .logo-dot { width:8px;height:8px;border-radius:50%;background:var(--accent); }
 .lab-name { font-size:14px;font-weight:600;color:var(--c); }
@@ -611,7 +714,7 @@ function openTransferModal(item) {
 .month-arrow:hover { background:var(--c5); }
 
 /* TABS */
-.tabs { display:flex;gap:1px;background:var(--c5);border-radius:var(--r);padding:2px;width:fit-content; }
+.tabs { display:flex;gap:1px;background:var(--c5);border-radius:var(--r);padding:2px;width:fit-content;flex-wrap:wrap; }
 .tab { padding:6px 14px;font-size:12px;font-weight:500;border:none;background:none;color:var(--c2);cursor:pointer;border-radius:5px;white-space:nowrap; }
 .tab.on { background:var(--bg);color:var(--c);box-shadow:0 1px 3px rgba(0,0,0,.08); }
 .tab:hover:not(.on) { color:var(--c); }
@@ -649,8 +752,9 @@ function openTransferModal(item) {
 .tb { display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;position:relative; }
 .tb-l { display:flex;gap:8px;flex:1;flex-wrap:wrap; }
 .sbox { position:relative;flex:1;min-width:160px; }
-.sbox svg { position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--c3); }
-.sbox input { padding-left:32px;width:100%; }
+.sbox svg { position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--c3);pointer-events:none; }
+/* higher specificity than `.pharm-app :deep(input[type=text])` so the icon no longer overlaps the text */
+.pharm-app .sbox input[type=text] { padding-left:32px;width:100%; }
 .btn { height:34px;padding:0 14px;border:1px solid var(--c5);border-radius:var(--r);background:var(--bg);color:var(--c);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500; }
 .btn:hover { background:var(--c6); }
 .btn.primary { background:var(--accent);color:#fff;border-color:var(--accent); }
@@ -659,8 +763,8 @@ function openTransferModal(item) {
 .btn.ghost:hover { background:#bfdbfe; }
 
 /* FILTER PANEL */
-.filter-panel { background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2);overflow:hidden;transition:all .2s; }
-.filter-panel-body { padding:12px 14px;border-top:1px solid var(--c5);flex-wrap:wrap;gap:8px; }
+.filter-panel { background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2);overflow:hidden; }
+.filter-panel-body { padding:12px 14px;flex-wrap:wrap;gap:8px; }
 .filter-active-count { background:var(--accent);color:#fff;font-size:10px;padding:1px 6px;border-radius:20px;font-weight:700; }
 .filter-chevron { color:var(--c3);font-size:11px;transition:transform .2s; }
 .filter-chevron.open { transform:rotate(180deg); }
@@ -669,28 +773,45 @@ function openTransferModal(item) {
 .col-toggle-wrap { position:relative; }
 .col-toggle-btn { height:34px;padding:0 12px;border:1px solid var(--c5);border-radius:var(--r);background:var(--bg);color:var(--c2);cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;white-space:nowrap; }
 .col-toggle-btn:hover { background:var(--c6); }
-.col-dropdown { display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2);box-shadow:0 4px 16px rgba(0,0,0,.1);z-index:80;min-width:180px;padding:8px 0; }
+.col-dropdown { display:none;position:absolute;top:calc(100% + 4px);left:0;background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2);box-shadow:0 4px 16px rgba(0,0,0,.1);z-index:80;min-width:200px;padding:8px 0; }
 .col-dropdown.open { display:block; }
 .col-dropdown label { display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:12px;cursor:pointer;color:var(--c); }
 .col-dropdown label:hover { background:var(--c7); }
 .col-dropdown input[type=checkbox] { width:13px;height:13px;accent-color:var(--accent);cursor:pointer; }
 .col-dropdown-divider { border:none;border-top:1px solid var(--c5);margin:4px 0; }
 
-/* TABLE */
-.tbl-wrap { background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2);overflow:visible; }
-.tbl-wrap table { width:100%;border-collapse:collapse; }
+/* TABLE — scrolls horizontally inside its card instead of overflowing the page */
+.tbl-anchor { scroll-margin-top:76px; }
+.tbl-wrap { background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2);overflow-x:auto; }
+.tbl-wrap table { width:100%;border-collapse:separate;border-spacing:0; }
+.inv-table table { min-width:1500px; }
 .tbl-wrap th { font-size:10px;font-weight:600;color:var(--c2);text-align:left;padding:10px 12px;background:var(--c7);border-bottom:1px solid var(--c5);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap; }
-.tbl-wrap td { padding:10px 12px;border-bottom:1px solid var(--c6);vertical-align:middle; }
+.tbl-wrap td { padding:10px 12px;border-bottom:1px solid var(--c6);vertical-align:middle;white-space:nowrap; }
 .tbl-wrap tr:last-child td { border-bottom:none; }
 .tbl-wrap tr:hover td { background:var(--c7); }
 .num { text-align:right; }
 .empty { text-align:center;padding:2.5rem;color:var(--c3);font-size:13px; }
 
+/* column helpers */
+.tbl-wrap td.col-name { min-width:240px;max-width:320px;white-space:normal;font-weight:500;line-height:1.4; }
+.c-muted { color:var(--c2);font-size:12px; }
+.c-strong { font-weight:500; }
+.c-small { font-size:11px; }
+.c-mono { font-family:var(--fm);color:var(--c2); }
+
+/* sticky actions column so it stays visible while scrolling sideways */
+.tbl-wrap th.col-actions,
+.tbl-wrap td.col-actions { position:sticky;right:0;z-index:2;text-align:center;box-shadow:-1px 0 0 var(--c5); }
+.tbl-wrap td.col-actions { background:var(--bg); }
+.tbl-wrap tr:hover td.col-actions { background:var(--c7); }
+
 /* SECTION ROW */
 .sec-row td { background:var(--accent);color:#fff;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:6px 12px; }
+.tbl-wrap .sec-row:hover td { background:var(--accent); }
+.sec-label { position:sticky;left:12px;display:inline-block; }
 
 /* BADGES */
-.badge { display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px; }
+.badge { display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap; }
 .b-ok { background:var(--green2);color:var(--green); }
 .b-low { background:var(--amber2);color:var(--amber); }
 .b-crit { background:var(--red2);color:var(--red); }
@@ -699,26 +820,42 @@ function openTransferModal(item) {
 .b-fund { font-size:10px;padding:2px 7px;border-radius:20px;font-weight:600;white-space:nowrap;background:var(--c6);color:var(--c2); }
 .b-in { background:#dcfce7;color:#14532d; }
 .b-out { background:#fee2e2;color:#7f1d1d; }
-.b-sec { background:var(--accent2);color:var(--accent);font-size:10px;padding:1px 7px;border-radius:20px; }
+.b-sec { background:var(--accent2);color:var(--accent);font-size:10px;padding:1px 7px;border-radius:20px;white-space:nowrap; }
 
-/* EXP CELL */
-.exp-cell { display:flex;flex-direction:column;gap:2px; }
-
-/* DOT MENU */
+/* DOT MENU — fixed so the scrollable table never clips it */
 .dot-menu-wrap { position:relative;display:inline-block; }
 .dot-menu-btn { width:28px;height:28px;border:1px solid var(--c5);border-radius:var(--r);background:var(--bg);color:var(--c2);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:16px;line-height:1; }
 .dot-menu-btn:hover { background:var(--c6);color:var(--c); }
-.dot-menu { display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2);box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:90;min-width:150px;padding:4px 0; }
-.dot-menu.open { display:block; }
+.dot-menu { position:fixed;background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2);box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:100;min-width:176px;padding:4px 0;text-align:left; }
 .dot-menu button { display:flex;align-items:center;gap:8px;width:100%;padding:7px 14px;background:none;border:none;font-size:12px;color:var(--c);cursor:pointer;text-align:left; }
 .dot-menu button:hover { background:var(--c7); }
 .dot-menu button.dm-in { color:var(--green); }
 .dot-menu button.dm-out { color:var(--red); }
+.dot-menu button.dm-transfer { color:var(--accent); }
 .dot-menu button.dm-archive { color:var(--amber); }
 .dot-menu button.dm-del { color:var(--red); }
 .dot-menu-sep { border:none;border-top:1px solid var(--c5);margin:4px 0; }
 
+/* PAGINATION */
+.pager { display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 14px;background:var(--bg);border:1px solid var(--c5);border-radius:var(--r2); }
+.pager-info { font-size:12px;color:var(--c2); }
+.pager-info strong { color:var(--c);font-weight:600; }
+.pager-nav { display:flex;align-items:center;gap:4px;flex-wrap:wrap; }
+.pg-btn { min-width:30px;height:30px;padding:0 8px;border:1px solid var(--c5);border-radius:var(--r);background:var(--bg);color:var(--c);font-size:12px;font-weight:500;cursor:pointer; }
+.pg-btn:hover:not(:disabled):not(.on) { background:var(--c6); }
+.pg-btn.on { background:var(--accent);border-color:var(--accent);color:#fff; }
+.pg-btn:disabled { color:var(--c4);cursor:default; }
+.pg-btn.gap { border-color:transparent;background:none; }
+.pg-btn:focus-visible { outline:2px solid var(--accent);outline-offset:1px; }
+.pager-size { display:flex;align-items:center;gap:8px;font-size:12px;color:var(--c2); }
+.pager-size select { height:30px !important; }
+
 /* ARCHIVED SECTION */
 .arch-section { margin-top:20px; }
 .arch-head { font-size:11px;font-weight:600;color:var(--c2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;display:flex;align-items:center;gap:6px; }
+
+@media (max-width: 900px) {
+  .stats { grid-template-columns:repeat(2,1fr); }
+  .pager { justify-content:center; }
+}
 </style>
