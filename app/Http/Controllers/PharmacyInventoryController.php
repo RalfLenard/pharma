@@ -27,191 +27,195 @@ class PharmacyInventoryController extends Controller
             'items' => Item::orderBy('name')->get(),
             'transactions' => Transaction::orderBy('date')->get(),
             'wastageRecords' => WastageRecord::orderBy('date')->get(),
-             'transfers' => Transfer::latest()->get(),
+            'transfers' => Transfer::latest()->get(),
             'labSettings' => LabSetting::current(),
-             'dispenses' => Dispense::with('dispenseItems.item:id,name,brand,vol,unit')
-        ->latest()
-        ->get(),
+            'dispenses' => Dispense::with('dispenseItems.item:id,name,brand,vol,unit')
+                ->latest()
+                ->get(),
         ]);
     }
 
     /* ───────────────────────── ITEMS ───────────────────────── */
 
- public function storeItem(Request $request): RedirectResponse
-{
-    $data = $request->validate([
-        'name'              => 'required|string|max:255',
-        'vol'               => 'nullable|string|max:100',
-        'brand'             => 'nullable|string|max:255',
-        'sec'               => 'nullable|string|max:100',
-        'lot'               => 'nullable|string|max:100',
-        'exp'               => 'nullable|date',
-        'unit'              => 'required|string|max:50',
-        'min'               => 'nullable|integer|min:0',
-        'fund'              => 'nullable|string|max:100',
-        'added_date'        => 'nullable|date',
-        'by'                => 'nullable|string|max:255',
-        'init_in'           => 'nullable|integer|min:0',
-        'init_out'          => 'nullable|integer|min:0',
-        'quarter_delivered' => 'nullable|string|max:20',
-    ]);
-
-    $addedDate = $data['added_date'] ?? now()->toDateString();
-    $performedBy = $data['by'] ?? 'System';
-
-    $initIn = (int) ($data['init_in'] ?? 0);
-    $initOut = (int) ($data['init_out'] ?? 0);
-
-    // Prevent stock out when there is no stock
-    if ($initIn === 0 && $initOut > 0) {
-        return back()
-            ->withErrors([
-                'init_out' => 'You cannot stock out an item that has no stock.'
-            ])
-            ->withInput();
-    }
-
-    // Prevent stock out greater than stock in
-    if ($initOut > $initIn) {
-        return back()
-            ->withErrors([
-                'init_out' => 'Initial stock out cannot be greater than the initial stock in.'
-            ])
-            ->withInput();
-    }
-
-    $item = Item::create([
-        'name'               => $data['name'],
-        'vol'                => $data['vol'] ?? null,
-        'brand'              => $data['brand'] ?? null,
-        'sec'                => $data['sec'] ?? null,
-        'lot'                => $data['lot'] ?? null,
-        'exp'                => $data['exp'] ?? null,
-        'unit'               => $data['unit'],
-        'min'                => $data['min'] ?? 0,
-        'fund'               => $data['fund'] ?? null,
-        'order_qty'          => 0,
-        'notes'              => '',
-        'added_date'         => $addedDate,
-        'quarter_delivered'  => $data['quarter_delivered'] ?? null,
-    ]);
-
-    // Initial Stock In
-    if ($initIn > 0) {
-        $item->transactions()->create([
-            'type'         => 'in',
-            'qty'          => $initIn,
-            'date'         => $addedDate,
-            'performed_by' => $performedBy,
-            'note'         => 'Initial stock in',
+    public function storeItem(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'name'              => 'required|string|max:255',
+            'vol'               => 'nullable|string|max:100',
+            'brand'             => 'nullable|string|max:255',
+            'sec'               => 'nullable|string|max:100',
+            'lot'               => 'nullable|string|max:100',
+            'exp'               => 'nullable|date',
+            'unit'              => 'required|string|max:50',
+            'unit_cost'         => 'nullable|numeric|min:0',
+            'min'               => 'nullable|integer|min:0',
+            'fund'              => 'nullable|string|max:100',
+            'added_date'        => 'nullable|date',
+            'by'                => 'nullable|string|max:255',
+            'init_in'           => 'nullable|integer|min:0',
+            'init_out'          => 'nullable|integer|min:0',
+            'quarter_delivered' => 'nullable|string|max:20',
         ]);
-    }
 
-    // Initial Stock Out
-    if ($initOut > 0) {
-        $item->transactions()->create([
-            'type'         => 'out',
-            'qty'          => $initOut,
-            'date'         => $addedDate,
-            'performed_by' => $performedBy,
-            'note'         => 'Initial stock out',
+        $addedDate = $data['added_date'] ?? now()->toDateString();
+        $performedBy = $data['by'] ?? 'System';
+
+        $initIn = (int) ($data['init_in'] ?? 0);
+        $initOut = (int) ($data['init_out'] ?? 0);
+
+        // Prevent stock out when there is no stock
+        if ($initIn === 0 && $initOut > 0) {
+            return back()
+                ->withErrors([
+                    'init_out' => 'You cannot stock out an item that has no stock.'
+                ])
+                ->withInput();
+        }
+
+        // Prevent stock out greater than stock in
+        if ($initOut > $initIn) {
+            return back()
+                ->withErrors([
+                    'init_out' => 'Initial stock out cannot be greater than the initial stock in.'
+                ])
+                ->withInput();
+        }
+
+        $item = Item::create([
+            'name'               => $data['name'],
+            'vol'                => $data['vol'] ?? null,
+            'brand'              => $data['brand'] ?? null,
+            'sec'                => $data['sec'] ?? null,
+            'lot'                => $data['lot'] ?? null,
+            'exp'                => $data['exp'] ?? null,
+            'unit'               => $data['unit'],
+            'unit_cost'          => $data['unit_cost'] ?? 0,
+            'min'                => $data['min'] ?? 0,
+            'fund'               => $data['fund'] ?? null,
+            'order_qty'          => 0,
+            'notes'              => '',
+            'added_date'         => $addedDate,
+            'quarter_delivered'  => $data['quarter_delivered'] ?? null,
         ]);
+
+        // Initial Stock In
+        if ($initIn > 0) {
+            $item->transactions()->create([
+                'type'         => 'in',
+                'qty'          => $initIn,
+                'date'         => $addedDate,
+                'performed_by' => $performedBy,
+                'note'         => 'Initial stock in',
+            ]);
+        }
+
+        // Initial Stock Out
+        if ($initOut > 0) {
+            $item->transactions()->create([
+                'type'         => 'out',
+                'qty'          => $initOut,
+                'date'         => $addedDate,
+                'performed_by' => $performedBy,
+                'note'         => 'Initial stock out',
+            ]);
+        }
+
+        // If both are zero, just record the item creation
+        if ($initIn === 0 && $initOut === 0) {
+            $item->transactions()->create([
+                'type'         => 'in',
+                'qty'          => 0,
+                'date'         => $addedDate,
+                'performed_by' => $performedBy,
+                'note'         => 'Item added',
+            ]);
+        }
+
+        return back()->with('success', 'Item added successfully.');
     }
 
-    // If both are zero, just record the item creation
-    if ($initIn === 0 && $initOut === 0) {
-        $item->transactions()->create([
-            'type'         => 'in',
-            'qty'          => 0,
-            'date'         => $addedDate,
-            'performed_by' => $performedBy,
-            'note'         => 'Item added',
+    public function updateItem(Request $request, Item $item): RedirectResponse
+    {
+        $data = $request->validate([
+            'name'              => 'required|string|max:255',
+            'vol'               => 'nullable|string|max:100',
+            'brand'             => 'nullable|string|max:255',
+            'sec'               => 'nullable|string|max:100',
+            'lot'               => 'nullable|string|max:100',
+            'exp'               => 'nullable|date',
+            'unit'              => 'required|string|max:50',
+            'unit_cost'         => 'nullable|numeric|min:0',
+            'min'               => 'nullable|integer|min:0',
+            'order_qty'         => 'nullable|integer|min:0',
+            'fund'              => 'nullable|string|max:100',
+            'add_in'            => 'nullable|integer|min:0',
+            'add_out'           => 'nullable|integer|min:0',
+            'quarter_delivered' => 'nullable|string|max:20',
         ]);
-    }
 
-    return back()->with('success', 'Item added successfully.');
-}
+        $addIn = (int) ($data['add_in'] ?? 0);
+        $addOut = (int) ($data['add_out'] ?? 0);
 
-public function updateItem(Request $request, Item $item): RedirectResponse
-{
-    $data = $request->validate([
-        'name'              => 'required|string|max:255',
-        'vol'               => 'nullable|string|max:100',
-        'brand'             => 'nullable|string|max:255',
-        'sec'               => 'nullable|string|max:100',
-        'lot'               => 'nullable|string|max:100',
-        'exp'               => 'nullable|date',
-        'unit'              => 'required|string|max:50',
-        'min'               => 'nullable|integer|min:0',
-        'order_qty'         => 'nullable|integer|min:0',
-        'fund'              => 'nullable|string|max:100',
-        'add_in'            => 'nullable|integer|min:0',
-        'add_out'           => 'nullable|integer|min:0',
-        'quarter_delivered' => 'nullable|string|max:20',
-    ]);
+        // Current stock before this update
+        $currentStock = $item->stock;
 
-    $addIn = (int) ($data['add_in'] ?? 0);
-    $addOut = (int) ($data['add_out'] ?? 0);
+        // Prevent stock out if there is no stock
+        if ($currentStock <= 0 && $addOut > 0) {
+            return back()
+                ->withErrors([
+                    'add_out' => 'You cannot stock out an item that has no stock.'
+                ])
+                ->withInput();
+        }
 
-    // Current stock before this update
-    $currentStock = $item->stock;
+        // Prevent stock out greater than available stock
+        if ($addOut > $currentStock) {
+            return back()
+                ->withErrors([
+                    'add_out' => "Only {$currentStock} item(s) are available in stock."
+                ])
+                ->withInput();
+        }
 
-    // Prevent stock out if there is no stock
-    if ($currentStock <= 0 && $addOut > 0) {
-        return back()
-            ->withErrors([
-                'add_out' => 'You cannot stock out an item that has no stock.'
-            ])
-            ->withInput();
-    }
-
-    // Prevent stock out greater than available stock
-    if ($addOut > $currentStock) {
-        return back()
-            ->withErrors([
-                'add_out' => "Only {$currentStock} item(s) are available in stock."
-            ])
-            ->withInput();
-    }
-
-    $item->update([
-        'name'              => $data['name'],
-        'vol'               => $data['vol'] ?? null,
-        'brand'             => $data['brand'] ?? null,
-        'sec'               => $data['sec'] ?? null,
-        'lot'               => $data['lot'] ?? null,
-        'exp'               => $data['exp'] ?? null,
-        'unit'              => $data['unit'],
-        'min'               => $data['min'] ?? 0,
-        'order_qty'         => $data['order_qty'] ?? 0,
-        'fund'              => $data['fund'] ?? null,
-        'quarter_delivered' => $data['quarter_delivered'] ?? $item->quarter_delivered,
-    ]);
-
-    $today = now()->toDateString();
-
-    if ($addIn > 0) {
-        $item->transactions()->create([
-            'type'         => 'in',
-            'qty'          => $addIn,
-            'date'         => $today,
-            'performed_by' => 'System',
-            'note'         => 'Stock in (edit)',
+        $item->update([
+            'name'              => $data['name'],
+            'vol'               => $data['vol'] ?? null,
+            'brand'             => $data['brand'] ?? null,
+            'sec'               => $data['sec'] ?? null,
+            'lot'               => $data['lot'] ?? null,
+            'exp'               => $data['exp'] ?? null,
+            'unit'              => $data['unit'],
+            'unit_cost'         => $data['unit_cost'] ?? 0,
+            'min'               => $data['min'] ?? 0,
+            'order_qty'         => $data['order_qty'] ?? 0,
+            'fund'              => $data['fund'] ?? null,
+            'quarter_delivered' => $data['quarter_delivered'] ?? $item->quarter_delivered,
         ]);
-    }
 
-    if ($addOut > 0) {
-        $item->transactions()->create([
-            'type'         => 'out',
-            'qty'          => $addOut,
-            'date'         => $today,
-            'performed_by' => 'System',
-            'note'         => 'Stock out (edit)',
-        ]);
-    }
+        $today = now()->toDateString();
 
-    return back()->with('success', 'Item updated successfully.');
-}
+        if ($addIn > 0) {
+            $item->transactions()->create([
+                'type'         => 'in',
+                'qty'          => $addIn,
+                'date'         => $today,
+                'performed_by' => 'System',
+                'note'         => 'Stock in (edit)',
+            ]);
+        }
+
+        if ($addOut > 0) {
+            $item->transactions()->create([
+                'type'         => 'out',
+                'qty'          => $addOut,
+                'date'         => $today,
+                'performed_by' => 'System',
+                'note'         => 'Stock out (edit)',
+            ]);
+        }
+
+        return back()->with('success', 'Item updated successfully.');
+    }
 
     public function destroyItem(Item $item): RedirectResponse
     {

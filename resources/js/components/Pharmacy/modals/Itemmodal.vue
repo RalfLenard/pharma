@@ -20,7 +20,7 @@ const isFundOther = computed(() => form.fund === 'Other')
 
 const form = useForm({
   name: '', vol: '', brand: '', sec: '', lot: '', exp: '', min: 5,
-  fund: '', unit: '', added_date: localDateStr(), by: '',
+  fund: '', unit: '', unit_cost: 0, added_date: localDateStr(), by: '',
   init_in: 0, init_out: 0, add_in: 0, add_out: 0, order_qty: 0,
   quarter_delivered: '', // This holds the payload string (e.g., "Q3 2026") sent to the database
 })
@@ -101,6 +101,15 @@ const stockError = computed(() => {
   return ''
 })
 
+// Unit cost must be a number of 0 or more (an empty box counts as 0)
+const unitCostError = computed(() => {
+  const raw = form.unit_cost
+  if (raw === '' || raw === null || raw === undefined) return ''
+  const n = Number(raw)
+  if (isNaN(n) || n < 0) return 'Unit cost must be 0 or more.'
+  return ''
+})
+
 // WATCHER: Automatically convert the date picker choice into the code string
 watch(quarterDeliveredDate, (newDate) => {
   form.quarter_delivered = getQuarterFromDate(newDate)
@@ -132,6 +141,7 @@ watch(() => props.show, (visible) => {
     form.min = props.item.min || 0
     form.order_qty = props.item.order_qty || 0
     form.unit = props.item.unit || ''
+    form.unit_cost = props.item.unit_cost ?? 0
 
     // If the saved fund value isn't one of the known options, treat it as a
     // custom "Other" value: select "Other" in the dropdown and pre-fill the
@@ -163,6 +173,7 @@ watch(() => props.show, (visible) => {
     form.added_date = localDateStr()
     quarterDeliveredDate.value = localDateStr()
     form.min = 5
+    form.unit_cost = 0
     form.init_in = 0
     form.init_out = 0
     fundOther.value = ''
@@ -182,6 +193,11 @@ function submit() {
 
   if (isFundOther.value && !fundOther.value.trim()) {
     alert('Please specify the fund source.')
+    return
+  }
+
+  if (unitCostError.value) {
+    alert(unitCostError.value)
     return
   }
 
@@ -206,6 +222,7 @@ function submit() {
       order_qty: data.order_qty,
       fund: fundValue,
       unit: data.unit,
+      unit_cost: Number(data.unit_cost) || 0,
       add_in: data.add_in,
       add_out: data.add_out,
       quarter_delivered: data.quarter_delivered,
@@ -224,6 +241,7 @@ function submit() {
       min: data.min,
       fund: fundValue,
       unit: data.unit,
+      unit_cost: Number(data.unit_cost) || 0,
       added_date: data.added_date,
       by: data.by,
       init_in: data.init_in,
@@ -292,9 +310,25 @@ function submit() {
 
         <div class="form-row dynamic-cols">
           <div class="form-group">
+            <label class="form-label">Unit cost</label>
+            <input
+              v-model.number="form.unit_cost"
+              type="number"
+              min="0"
+              step="0.01"
+              class="form-input"
+              :class="{ 'input-error': unitCostError }"
+              placeholder="0.00"
+            />
+            <span v-if="unitCostError" class="field-error">{{ unitCostError }}</span>
+          </div>
+          <div class="form-group">
             <label class="form-label">Min. stock level</label>
             <input v-model.number="form.min" type="number" min="0" class="form-input" placeholder="5" />
           </div>
+        </div>
+
+        <div class="form-row full-width">
           <div class="form-group">
             <label class="form-label">Fund Source</label>
             <div class="select-wrapper">
@@ -397,7 +431,7 @@ function submit() {
 
       <div class="modal-footer">
         <button class="btn-secondary" @click="close">Cancel</button>
-        <button class="btn-primary" :disabled="form.processing || !!stockError" @click="submit">
+        <button class="btn-primary" :disabled="form.processing || !!stockError || !!unitCostError" @click="submit">
           {{ mode === 'edit' ? 'Save changes' : 'Save item' }}
         </button>
       </div>

@@ -26,6 +26,11 @@ function fmtDate(d) {
   if (!d) return '—'
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`
 }
+/* e.g. "October 2026" */
+function fmtMonthYear(d) {
+  if (!d) return '—'
+  return d.toLocaleString('en-US', { month: 'long', year: 'numeric' })
+}
 const fmtInt = (v) => Number(v || 0).toLocaleString('en-US')
 const fmtMoney = (v) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const pad = (n, len = 5) => String(n).padStart(len, '0')
@@ -36,7 +41,7 @@ const dateFrom = ref(ymd(new Date(today.getFullYear(), 0, 1)))
 const dateTo = ref(ymd(today))
 const sec = ref('')
 const fund = ref('')
-const itemId = ref('')
+const pickedIds = ref([]) // item ids ticked in the "Items to print" dropdown
 const includeArchived = ref(false)
 const hideEmpty = ref(false)
 
@@ -79,8 +84,38 @@ const rangeError = computed(() => {
   return ''
 })
 
+/* ── item dropdown with checkboxes ── */
+const dropOpen = ref(false)
+const dropSearch = ref('')
+const dropRef = ref(null)
+
+const visibleOptions = computed(() => {
+  const q = dropSearch.value.trim().toLowerCase()
+  return q ? itemOptions.value.filter((o) => o.label.toLowerCase().includes(q)) : itemOptions.value
+})
+
+const dropLabel = computed(() => {
+  const n = pickedIds.value.length
+  if (!n) return 'All items'
+  if (n === 1) return itemOptions.value.find((o) => o.value === pickedIds.value[0])?.label || '1 item selected'
+  return `${n} items selected`
+})
+
+function toggleItem(v) {
+  pickedIds.value = pickedIds.value.includes(v)
+    ? pickedIds.value.filter((x) => x !== v)
+    : [...pickedIds.value, v]
+}
+function pickAllVisible() {
+  pickedIds.value = [...new Set([...pickedIds.value, ...visibleOptions.value.map((o) => o.value)])]
+}
+function clearPicked() { pickedIds.value = [] }
+function onDocClick(e) {
+  if (dropOpen.value && dropRef.value && !dropRef.value.contains(e.target)) dropOpen.value = false
+}
+
 function clearScope() {
-  sec.value = ''; fund.value = ''; itemId.value = ''
+  sec.value = ''; fund.value = ''; pickedIds.value = []
   includeArchived.value = false; hideEmpty.value = false
 }
 
@@ -142,6 +177,14 @@ function buildCard(item, from, to) {
     entries.push({ no: `TXN-${date.getFullYear()}-${pad(t.id)}`, type, date, received: isIn ? qty : 0, issued: isIn ? 0 : qty, ref, remark })
   })
 
+  /* Commodity received date = the earliest date this item was received (regardless of the report period) */
+  let receivedDate = null
+  entries.forEach((e) => {
+    if (e.received > 0 && (!receivedDate || e.date.getTime() < receivedDate.getTime())) {
+      receivedDate = e.date
+    }
+  })
+
   let balance = 0
   let bf = null
   let received = 0
@@ -179,6 +222,8 @@ function buildCard(item, from, to) {
     description,
     uom: item.unit || '—',
     unitCost,
+    receivedDate,
+    procurementMode: fmtMonthYear(receivedDate), // shown under "Mode of Procurement"
     rows,
     hasMovement: rows.length > (hasBf ? 1 : 0),
     received, issued,
@@ -192,7 +237,7 @@ const itemsInScope = computed(() => props.items
     if (!includeArchived.value && i.archived) return false
     if (sec.value && i.sec !== sec.value) return false
     if (fund.value && i.fund !== fund.value) return false
-    if (itemId.value && String(i.id) !== itemId.value) return false
+    if (pickedIds.value.length && !pickedIds.value.includes(String(i.id))) return false
     return true
   })
   .sort((a, b) => (a.sec || '').localeCompare(b.sec || '')
@@ -225,7 +270,7 @@ const visibleCards = computed(() => {
   return cards.value.slice(start, start + perPage.value)
 })
 
-watch([dateFrom, dateTo, sec, fund, itemId, includeArchived, hideEmpty, perPage], () => { page.value = 1 })
+watch([dateFrom, dateTo, sec, fund, pickedIds, includeArchived, hideEmpty, perPage], () => { page.value = 1 })
 watch(() => cards.value.length, (len) => {
   const max = Math.max(1, Math.ceil(len / perPage.value))
   if (page.value > max) page.value = max
@@ -242,8 +287,14 @@ async function printReport() {
   printing.value = false
 }
 function onAfterPrint() { printing.value = false }
-onMounted(() => window.addEventListener('afterprint', onAfterPrint))
-onUnmounted(() => window.removeEventListener('afterprint', onAfterPrint))
+onMounted(() => {
+  window.addEventListener('afterprint', onAfterPrint)
+  document.addEventListener('mousedown', onDocClick)
+})
+onUnmounted(() => {
+  window.removeEventListener('afterprint', onAfterPrint)
+  document.removeEventListener('mousedown', onDocClick)
+})
 
 /* ───────────────────────── CSV (Excel) ───────────────────────── */
 function csvCell(v) {
@@ -254,19 +305,19 @@ function csvCell(v) {
 function downloadCsv() {
   if (!cards.value.length) return
   const header = [
-    'Stock Keeping Unit', 'Item Description', 'UOM', 'Funding Source',
+    'Stock Keeping Unit', 'Item Description', 'UOM', 'Funding Source', 'Mode of Procurement',
     'Transaction No', 'Transaction Type', 'Transaction Date', 'Batch No', 'Expiry Date',
-    'Category', 'Unit Cost', 'Received Qty', 'Issued Qty', 'Balance Qty', 'Stock Value',
-    'Reference Doc No', 'Remark',
+    'Category', 'Unit Cost', 'Received Qty', 'Issued Qty', 'Balance Qty',
+    'Remark',
   ]
   const lines = [header.map(csvCell).join(',')]
   cards.value.forEach((c) => {
     c.rows.forEach((r) => {
       lines.push([
-        c.sku, c.description, c.uom, c.item.fund || '',
+        c.sku, c.description, c.uom, c.item.fund || '', c.procurementMode,
         r.no, r.type, fmtDate(r.date), c.item.lot || '', c.item.exp ? fmtDate(toDate(c.item.exp)) : '',
-        c.item.sec || '', c.unitCost.toFixed(2), r.received ?? '', r.issued ?? '', r.balance, r.value.toFixed(2),
-        r.ref, r.remark,
+        c.item.sec || '', c.unitCost.toFixed(2), r.received ?? '', r.issued ?? '', r.balance,
+        r.remark,
       ].map(csvCell).join(','))
     })
   })
@@ -321,13 +372,30 @@ function downloadCsv() {
               <option v-for="f in funds" :key="f" :value="f">{{ f }}</option>
             </select>
           </label>
-          <label class="fld grow">
-            <span>Single item</span>
-            <select v-model="itemId">
-              <option value="">All items</option>
-              <option v-for="o in itemOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-            </select>
-          </label>
+          <div class="fld grow">
+            <span>Items to print</span>
+            <div ref="dropRef" class="ms">
+              <button type="button" class="ms-btn" :aria-expanded="dropOpen" @click="dropOpen = !dropOpen">
+                <span class="ms-label">{{ dropLabel }}</span>
+                <span class="ms-caret">▾</span>
+              </button>
+              <div v-if="dropOpen" class="ms-panel">
+                <input v-model="dropSearch" type="text" class="ms-search" placeholder="Search items…" />
+                <div class="ms-tools">
+                  <button type="button" class="link" @click="pickAllVisible">Select all{{ dropSearch ? ' shown' : '' }}</button>
+                  <button type="button" class="link" :disabled="!pickedIds.length" @click="clearPicked">Clear</button>
+                  <span class="hint">{{ pickedIds.length }} selected</span>
+                </div>
+                <div class="ms-list">
+                  <label v-for="o in visibleOptions" :key="o.value" class="ms-opt">
+                    <input type="checkbox" :checked="pickedIds.includes(o.value)" @change="toggleItem(o.value)" />
+                    <span>{{ o.label }}</span>
+                  </label>
+                  <div v-if="!visibleOptions.length" class="ms-none">No items found</div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="checks">
           <label><input v-model="hideEmpty" type="checkbox" /> Only items with movement in this period</label>
@@ -368,21 +436,21 @@ function downloadCsv() {
               <div class="kv"><span class="k">Stock Keeping Unit:</span><span>{{ c.sku }}</span></div>
               <div class="kv"><span class="k">Item Description:</span><span>{{ c.description }}</span></div>
               <div class="kv"><span class="k">UOM:</span><span>{{ c.uom }}</span></div>
-              <div class="kv"><span class="k">Contract No / Source Doc No:</span><span></span></div>
+            
             </div>
             <div>
               <div class="kv"><span class="k">Entity Name:</span><span>{{ entityName }}</span></div>
               <div class="kv"><span class="k">Funding Source:</span><span>{{ c.item.fund || '—' }}</span></div>
-              <div class="kv"><span class="k">Mode of Procurement:</span><span></span></div>
+              <div class="kv"><span class="k">Mode of Procurement:</span><span>{{ c.procurementMode }}</span></div>
             </div>
           </div>
 
           <div class="tbl-scroll">
             <table>
               <colgroup>
-                <col style="width:9%"><col style="width:9%"><col style="width:6%"><col style="width:7%">
-                <col style="width:6%"><col style="width:9%"><col style="width:6%"><col style="width:6%">
-                <col style="width:6%"><col style="width:6%"><col style="width:7%"><col style="width:9%"><col style="width:10%">
+                <col style="width:10%"><col style="width:12%"><col style="width:8%"><col style="width:8%">
+                <col style="width:8%"><col style="width:10%"><col style="width:7%"><col style="width:7%">
+                <col style="width:7%"><col style="width:7%"><col style="width:16%">
               </colgroup>
               <thead>
                 <tr>
@@ -396,8 +464,6 @@ function downloadCsv() {
                   <th class="r">Received Qty</th>
                   <th class="r">Issued Qty</th>
                   <th class="r">Balance Qty</th>
-                  <th class="r">Stock Value</th>
-                  <th>Reference Doc No</th>
                   <th>Remark</th>
                 </tr>
               </thead>
@@ -413,8 +479,6 @@ function downloadCsv() {
                   <td class="r">{{ r.received === null ? '' : fmtInt(r.received) }}</td>
                   <td class="r">{{ r.issued === null ? '' : fmtInt(r.issued) }}</td>
                   <td class="r">{{ fmtInt(r.balance) }}</td>
-                  <td class="r">{{ fmtMoney(r.value) }}</td>
-                  <td>{{ r.ref }}</td>
                   <td>{{ r.remark }}</td>
                 </tr>
                 <tr class="tot">
@@ -422,8 +486,7 @@ function downloadCsv() {
                   <td class="r">{{ fmtInt(c.received) }}</td>
                   <td class="r">{{ fmtInt(c.issued) }}</td>
                   <td class="r">{{ fmtInt(c.closing) }}</td>
-                  <td class="r">{{ fmtMoney(c.closingValue) }}</td>
-                  <td colspan="2"></td>
+                  <td></td>
                 </tr>
               </tbody>
             </table>
@@ -451,9 +514,25 @@ function downloadCsv() {
 .block-title { font-size: 12px; font-weight: 600; margin-bottom: 10px; }
 .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
 .fld { display: flex; flex-direction: column; gap: 4px; min-width: 170px; }
-.fld.grow { flex: 1; min-width: 260px; }
+.fld.grow { flex: 1 1 320px; min-width: 260px; }
 .fld > span { font-size: 11px; color: var(--c2); }
-.fld select, .fld input { width: 100%; }
+.fld > select, .fld > input { width: 100%; }
+.ms { position: relative; width: 100%; }
+.ms-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 34px; padding: 0 10px; box-sizing: border-box; border: 1px solid var(--c5); border-radius: var(--r); background: var(--bg); color: var(--c); font-size: 13px; text-align: left; cursor: pointer; }
+.ms-btn:hover { background: var(--c7); }
+.ms-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-caret { flex: none; color: var(--c3); font-size: 11px; }
+.ms-panel { position: absolute; z-index: 50; top: calc(100% + 4px); left: 0; width: 100%; min-width: 320px; box-sizing: border-box; background: var(--bg); border: 1px solid var(--c5); border-radius: var(--r2); box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 10px; }
+.ms-search { display: block; width: 100%; height: 32px; box-sizing: border-box; margin: 0 0 8px; padding: 0 10px; }
+.ms-tools { display: flex; align-items: center; gap: 14px; padding: 0 2px 8px; border-bottom: 1px solid var(--c6); }
+.ms-tools .link:disabled { opacity: .4; cursor: default; text-decoration: none; }
+.ms-tools .hint { margin-left: auto; }
+.ms-list { max-height: 260px; overflow-y: auto; padding-top: 6px; }
+.ms-opt { display: flex; align-items: flex-start; gap: 10px; padding: 6px 6px; font-size: 12px; line-height: 1.35; cursor: pointer; border-radius: 4px; }
+.ms-opt:hover { background: var(--c7); }
+.ms-opt span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ms-opt input[type=checkbox] { flex: none; width: 15px; height: 15px; margin: 1px 0 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
+.ms-none { padding: 10px 6px; font-size: 12px; color: var(--c3); }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-left: 4px; }
 .chip { height: 30px; padding: 0 12px; border: 1px solid var(--c5); border-radius: 20px; background: var(--c7); color: var(--c2); font-size: 12px; font-weight: 500; cursor: pointer; }
 .chip:hover { background: var(--accent2); border-color: var(--accent2); color: var(--accent); }
@@ -484,6 +563,7 @@ function downloadCsv() {
 .sc-empty { text-align: center; padding: 40px 0; color: #64748b; font-size: 13px; }
 
 .card { margin-bottom: 18px; }
+
 .card-head { display: grid; grid-template-columns: 1.6fr 1fr; gap: 4px 24px; padding: 2px 4px 8px; break-after: avoid; page-break-after: avoid; }
 .kv { display: flex; gap: 4px; }
 .k { font-weight: 700; white-space: nowrap; }

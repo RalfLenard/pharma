@@ -35,6 +35,7 @@ class Item extends Model
         'archived', 
         'archived_date', 
         'archived_reason',
+        'unit_cost'
     ];
 
     /**
@@ -51,6 +52,7 @@ class Item extends Model
         'order_qty' => 'integer',
         'init_in' => 'integer',
         'init_out' => 'integer',
+        'unit_cost'     => 'decimal:2',
         // No cast needed for quarter_delivered (it's a string like "Q3 2026")
     ];
 
