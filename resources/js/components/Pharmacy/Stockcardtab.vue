@@ -35,6 +35,16 @@ const fmtInt = (v) => Number(v || 0).toLocaleString('en-US')
 const fmtMoney = (v) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const pad = (n, len = 5) => String(n).padStart(len, '0')
 
+/* Tidy up messy remarks such as: Transfer | 2026-08-04 | To: " | RHU III */
+function cleanRemark(s) {
+  if (!s) return ''
+  return String(s)
+    .replace(/\s*\|\s*To:\s*["'“”]*\s*(?=\|)/gi, ' ')
+    .replace(/\s*\|\s*To:\s*["'“”]*\s*$/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 /* ───────────────────────── filters ───────────────────────── */
 const today = new Date()
 const dateFrom = ref(ymd(new Date(today.getFullYear(), 0, 1)))
@@ -122,6 +132,7 @@ function clearScope() {
 /* ───────────────────────── stock card calculation ───────────────────────── */
 const entityName = computed(() => props.labSettings?.name || 'Pharmacy Supplies Inventory')
 
+/* Per item: sorted by date, then Received (in) BEFORE Issued (out), then id */
 const txnsByItem = computed(() => {
   const map = new Map()
   props.transactions.forEach((t) => {
@@ -131,7 +142,11 @@ const txnsByItem = computed(() => {
   })
   map.forEach((list) => list.sort((a, b) => {
     const da = (toDate(a.date)?.getTime() || 0) - (toDate(b.date)?.getTime() || 0)
-    return da || (Number(a.id) - Number(b.id))
+    if (da) return da
+    const ia = a.type === 'in' ? 0 : 1
+    const ib = b.type === 'in' ? 0 : 1
+    if (ia !== ib) return ia - ib
+    return Number(a.id) - Number(b.id)
   }))
   return map
 })
@@ -146,20 +161,12 @@ const transferByTxn = computed(() => {
 
 function buildCard(item, from, to) {
   const unitCost = Number(item.unit_cost) || 0
-  const openDate = toDate(item.added_date) || toDate(item.created_at) || toDate(today)
+  const fallbackDate = toDate(item.added_date) || toDate(item.created_at) || toDate(today)
   const entries = []
 
-  const initIn = Number(item.init_in) || 0
-  const initOut = Number(item.init_out) || 0
-  if (initIn > 0) {
-    entries.push({ no: `OPEN-IN-${pad(item.id)}`, type: 'Commodity Received', date: openDate, received: initIn, issued: 0, ref: '—', remark: 'Initial stock' })
-  }
-  if (initOut > 0) {
-    entries.push({ no: `OPEN-OUT-${pad(item.id)}`, type: 'Commodity Issued', date: openDate, received: 0, issued: initOut, ref: '—', remark: 'Initial issued' })
-  }
-
+  /* Only real transactions from the database (no synthetic opening / balance-forward rows) */
   ;(txnsByItem.value.get(Number(item.id)) || []).forEach((t) => {
-    const date = toDate(t.date) || openDate
+    const date = toDate(t.date) || fallbackDate
     const isIn = t.type === 'in'
     const qty = Number(t.qty) || 0
     const tr = transferByTxn.value.get(Number(t.id))
@@ -168,16 +175,22 @@ function buildCard(item, from, to) {
       type = 'Commodity Issued (Transfer)'
       ref = `TRF-${date.getFullYear()}-${pad(tr.id)}`
       const dest = tr.destination || tr.to_location || '—'
-      remark = `Transferred to ${dest}${tr.remarks ? ` — ${tr.remarks}` : ''}`
+      remark = `Transferred to ${dest}${tr.remarks ? ` — ${cleanRemark(tr.remarks)}` : ''}`
     } else {
       type = isIn ? 'Commodity Received' : 'Commodity Issued'
       ref = '—'
-      remark = t.note || ''
+      remark = cleanRemark(t.note)
     }
-    entries.push({ no: `TXN-${date.getFullYear()}-${pad(t.id)}`, type, date, received: isIn ? qty : 0, issued: isIn ? 0 : qty, ref, remark })
+    entries.push({
+      no: `TXN-${date.getFullYear()}-${pad(t.id)}`,
+      type, date,
+      received: isIn ? qty : 0,
+      issued: isIn ? 0 : qty,
+      ref, remark,
+    })
   })
 
-  /* Commodity received date = the earliest date this item was received (regardless of the report period) */
+  /* Commodity received date = earliest date this item was received */
   let receivedDate = null
   entries.forEach((e) => {
     if (e.received > 0 && (!receivedDate || e.date.getTime() < receivedDate.getTime())) {
@@ -186,7 +199,6 @@ function buildCard(item, from, to) {
   })
 
   let balance = 0
-  let bf = null
   let received = 0
   let issued = 0
   const rows = []
@@ -196,21 +208,12 @@ function buildCard(item, from, to) {
   entries.forEach((e) => {
     const t = e.date.getTime()
     if (t > toT) return
-    balance += e.received - e.issued
-    if (t < fromT) { bf = balance; return }
+    balance += e.received - e.issued // running balance still counts anything before the period
+    if (t < fromT) return            // …but earlier rows are not printed (no Balance Forward row)
     received += e.received
     issued += e.issued
     rows.push({ ...e, balance, value: balance * unitCost })
   })
-
-  const hasBf = bf !== null
-  if (hasBf) {
-    const prev = new Date(from); prev.setDate(prev.getDate() - 1)
-    rows.unshift({
-      no: '—', type: 'Balance Forward', date: from, received: null, issued: null, ref: '—',
-      remark: `Balance as of ${fmtDate(prev)}`, balance: bf, value: bf * unitCost, bf: true,
-    })
-  }
 
   const description = item.name
     + (item.brand ? ` — ${item.brand}` : '')
@@ -225,7 +228,7 @@ function buildCard(item, from, to) {
     receivedDate,
     procurementMode: fmtMonthYear(receivedDate), // shown under "Mode of Procurement"
     rows,
-    hasMovement: rows.length > (hasBf ? 1 : 0),
+    hasMovement: rows.length > 0,
     received, issued,
     closing: balance,
     closingValue: balance * unitCost,
@@ -277,8 +280,6 @@ watch(() => cards.value.length, (len) => {
 })
 
 /* ───────────────────────── print (this tab only) ───────────────────────── */
-/* While printing, the report is teleported to <body> and everything else is hidden by the
-   global print CSS at the bottom of this file. */
 async function printReport() {
   if (!cards.value.length) return
   printing.value = true
@@ -436,7 +437,6 @@ function downloadCsv() {
               <div class="kv"><span class="k">Stock Keeping Unit:</span><span>{{ c.sku }}</span></div>
               <div class="kv"><span class="k">Item Description:</span><span>{{ c.description }}</span></div>
               <div class="kv"><span class="k">UOM:</span><span>{{ c.uom }}</span></div>
-            
             </div>
             <div>
               <div class="kv"><span class="k">Entity Name:</span><span>{{ entityName }}</span></div>
@@ -468,7 +468,7 @@ function downloadCsv() {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(r, i) in c.rows" :key="i" :class="{ bf: r.bf }">
+                <tr v-for="(r, i) in c.rows" :key="i">
                   <td class="nw">{{ r.no }}</td>
                   <td>{{ r.type }}</td>
                   <td class="nw">{{ fmtDate(r.date) }}</td>
@@ -476,8 +476,8 @@ function downloadCsv() {
                   <td class="nw">{{ fmtDate(toDate(c.item.exp)) }}</td>
                   <td>{{ c.item.sec || '—' }}</td>
                   <td class="r">{{ fmtMoney(c.unitCost) }}</td>
-                  <td class="r">{{ r.received === null ? '' : fmtInt(r.received) }}</td>
-                  <td class="r">{{ r.issued === null ? '' : fmtInt(r.issued) }}</td>
+                  <td class="r">{{ fmtInt(r.received) }}</td>
+                  <td class="r">{{ fmtInt(r.issued) }}</td>
                   <td class="r">{{ fmtInt(r.balance) }}</td>
                   <td>{{ r.remark }}</td>
                 </tr>
@@ -576,7 +576,6 @@ function downloadCsv() {
 .card th { font-weight: 700; background: #f1f5f9; text-transform: none; letter-spacing: 0; }
 .card .r { text-align: right; }
 .card .nw { white-space: nowrap; }
-.card tr.bf td { background: #fafafa; font-style: italic; }
 .card tr.tot td { font-weight: 700; background: #f1f5f9; }
 </style>
 
@@ -588,6 +587,6 @@ function downloadCsv() {
   .pharm-print-root { display: block !important; border: 0 !important; border-radius: 0 !important; padding: 0 !important; margin: 0 !important; }
   .pharm-print-root .tbl-scroll { overflow: visible !important; }
   .pharm-print-root table { min-width: 0 !important; }
-  .pharm-print-root th, .pharm-print-root tr.bf td, .pharm-print-root tr.tot td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .pharm-print-root th, .pharm-print-root tr.tot td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 </style>
