@@ -142,6 +142,58 @@ function itemStatus(item) {
 const STATUS_LABEL = { ok: 'Adequate', low: 'Low stock', critical: 'Out Of Stock', expired: 'Expired', consume: 'Discard' }
 const STATUS_BADGE_CLASS = { ok: 'b-ok', low: 'b-low', critical: 'b-crit', expired: 'b-exp', consume: 'b-consume' }
 
+/* ── Expiration date color coding ──
+   expired / ≤ 30 days  → red
+   31–60 days           → orange
+   61–90 days           → yellow
+   > 90 days            → green
+   no date              → plain dash                                      */
+function expClass(exp) {
+  const days = daysUntilExpiry(exp)
+  if (days === null || days === undefined) return ''
+  if (days < 0) return 'exp-expired'
+  if (days <= 30) return 'exp-red'
+  if (days <= 60) return 'exp-orange'
+  if (days <= 90) return 'exp-yellow'
+  return 'exp-ok'
+}
+
+function expTitle(exp) {
+  const days = daysUntilExpiry(exp)
+  if (days === null || days === undefined) return ''
+  return expLabel(days)
+}
+
+/* ── Same-name items: which batch expires first? (FEFO) ──
+   Only items that are not archived, not expired, still have stock and have an
+   expiration date are ranked. A rank is only shown when 2+ batches share a name. */
+const expiryRank = computed(() => {
+  const groups = new Map()
+  props.items.forEach((i) => {
+    if (i.archived || !i.exp) return
+    if (itemStock(i) <= 0) return
+    const d = parseLocalDate(i.exp)
+    if (!d || d < new Date()) return
+    const key = (i.name || '').trim().toLowerCase()
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push({ id: i.id, time: d.getTime() })
+  })
+  const ranks = {}
+  groups.forEach((list) => {
+    if (list.length < 2) return
+    list.sort((a, b) => a.time - b.time)
+    list.forEach((x, idx) => { ranks[x.id] = idx + 1 })
+  })
+  return ranks
+})
+
+function rankLabel(rank) {
+  if (rank === 1) return 'Use first'
+  if (rank === 2) return '2nd'
+  if (rank === 3) return '3rd'
+  return `${rank}th`
+}
+
 /* Stats */
 const stats = computed(() => {
   const active = filteredItemsUnpaged.value
@@ -234,7 +286,13 @@ const filteredItemsUnpaged = computed(() => props.items.filter((item) => {
 const filteredItems = computed(() => [...filteredItemsUnpaged.value].sort((a, b) => {
   const ai = SEC_ORDER.indexOf(a.sec), bi = SEC_ORDER.indexOf(b.sec)
   const si = (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
-  return si !== 0 ? si : a.name.localeCompare(b.name)
+  if (si !== 0) return si
+  const nameCmp = a.name.localeCompare(b.name)
+  if (nameCmp !== 0) return nameCmp
+  // same name → nearest expiration first, no-date last
+  const ad = a.exp ? parseLocalDate(a.exp).getTime() : Infinity
+  const bd = b.exp ? parseLocalDate(b.exp).getTime() : Infinity
+  return ad === bd ? 0 : ad < bd ? -1 : 1
 }))
 
 /* ── Pagination (works together with search + filters) ── */
@@ -504,6 +562,18 @@ function openTransferModal(item) {
           </div>
         </div>
 
+        <!-- EXPIRATION COLOR LEGEND -->
+        <div class="exp-legend">
+          <span class="exp-legend-title">Expiration:</span>
+          <span class="exp-pill exp-expired">Expired</span>
+          <span class="exp-pill exp-red">≤ 30 days</span>
+          <span class="exp-pill exp-orange">31–60 days</span>
+          <span class="exp-pill exp-yellow">61–90 days</span>
+          <span class="exp-pill exp-ok">&gt; 90 days</span>
+          <span class="rank-tag first" style="margin-left:10px;">Use first</span>
+          <span style="font-size:11px;color:var(--c2);">= nearest expiry among items with the same name</span>
+        </div>
+
         <!-- INVENTORY TABLE -->
         <div ref="tableTopRef" class="tbl-anchor"></div>
         <div class="tbl-wrap inv-table">
@@ -538,7 +608,21 @@ function openTransferModal(item) {
                     <td v-if="isColVisible('added_date')" class="c-small">{{ item.added_date || '—' }}</td>
                     <td v-if="isColVisible('quarter_delivered')" class="c-small">{{ item.quarter_delivered || '—' }}</td>
                     <td v-if="isColVisible('lot')" class="c-small c-mono">{{ item.lot || '—' }}</td>
-                    <td v-if="isColVisible('exp')" class="c-small">{{ item.exp || '—' }}</td>
+                    <td v-if="isColVisible('exp')" class="c-small">
+                      <span
+                        v-if="item.exp"
+                        class="exp-pill"
+                        :class="expClass(item.exp)"
+                        :title="expTitle(item.exp)"
+                      >{{ item.exp }}</span>
+                      <span
+                        v-if="expiryRank[item.id]"
+                        class="rank-tag"
+                        :class="{ first: expiryRank[item.id] === 1 }"
+                        :title="expiryRank[item.id] === 1 ? 'Nearest expiration among items with this name — use this batch first' : 'Expires after the batch marked Use first'"
+                      >{{ rankLabel(expiryRank[item.id]) }}</span>
+                      <span v-else-if="!item.exp">—</span>
+                    </td>
                     <td v-if="isColVisible('stockio')" class="num"><span class="badge b-in">+{{ itemStockIn(item) }}</span></td>
                     <td v-if="isColVisible('stockio')" class="num"><span class="badge b-out">&#8722;{{ itemStockOut(item) }}</span></td>
                     <td class="num" :style="itemStock(item) === 0 ? 'color:var(--red);font-weight:700;' : itemStock(item) <= (item.min||0) ? 'color:var(--amber);font-weight:700;' : 'font-weight:600;'">
@@ -625,7 +709,15 @@ function openTransferModal(item) {
                   <td>{{ item.brand || '—' }}</td>
                   <td><span class="b-sec">{{ item.sec || '—' }}</span></td>
                   <td style="font-family:var(--fm);">{{ item.lot || '—' }}</td>
-                  <td>{{ item.exp || '—' }}</td>
+                  <td>
+                    <span
+                      v-if="item.exp"
+                      class="exp-pill"
+                      :class="expClass(item.exp)"
+                      :title="expTitle(item.exp)"
+                    >{{ item.exp }}</span>
+                    <span v-else>—</span>
+                  </td>
                   <td class="num">{{ itemStockIn(item) }}</td>
                   <td class="num">{{ itemStockOut(item) }}</td>
                   <td>{{ item.archived_date || '—' }}</td>
@@ -821,6 +913,20 @@ function openTransferModal(item) {
 .b-in { background:#dcfce7;color:#14532d; }
 .b-out { background:#fee2e2;color:#7f1d1d; }
 .b-sec { background:var(--accent2);color:var(--accent);font-size:10px;padding:1px 7px;border-radius:20px;white-space:nowrap; }
+
+/* EXPIRATION DATE COLORS */
+.exp-pill { display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap;border:1px solid transparent; }
+.exp-expired { background:#991b1b;color:#fff;border-color:#7f1d1d; }          /* already expired */
+.exp-red     { background:#fee2e2;color:#991b1b;border-color:#fca5a5; }      /* ≤ 30 days */
+.exp-orange  { background:#ffedd5;color:#c2410c;border-color:#fdba74; }      /* 31–60 days */
+.exp-yellow  { background:#fef9c3;color:#854d0e;border-color:#fde047; }      /* 61–90 days */
+.exp-ok      { background:#dcfce7;color:#166534;border-color:#86efac; }      /* > 90 days */
+
+.rank-tag { display:inline-block;margin-left:6px;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap;background:var(--c6);color:var(--c2);border:1px solid var(--c5); }
+.rank-tag.first { background:#1e40af;color:#fff;border-color:#1e40af; }
+
+.exp-legend { display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px; }
+.exp-legend-title { font-size:11px;font-weight:600;color:var(--c2);text-transform:uppercase;letter-spacing:.06em;margin-right:2px; }
 
 /* DOT MENU — fixed so the scrollable table never clips it */
 .dot-menu-wrap { position:relative;display:inline-block; }
