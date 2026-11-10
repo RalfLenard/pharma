@@ -166,7 +166,8 @@ function expTitle(exp) {
 
 /* ── Same-name items: which batch expires first? (FEFO) ──
    Only items that are not archived, not expired, still have stock and have an
-   expiration date are ranked. A rank is only shown when 2+ batches share a name. */
+   expiration date are ranked. Every ranked item gets a tag: "Use first" for the
+   batch that expires soonest (first-expired, first-out), then 2nd, 3rd… */
 const expiryRank = computed(() => {
   const groups = new Map()
   props.items.forEach((i) => {
@@ -180,7 +181,6 @@ const expiryRank = computed(() => {
   })
   const ranks = {}
   groups.forEach((list) => {
-    if (list.length < 2) return
     list.sort((a, b) => a.time - b.time)
     list.forEach((x, idx) => { ranks[x.id] = idx + 1 })
   })
@@ -188,7 +188,7 @@ const expiryRank = computed(() => {
 })
 
 function rankLabel(rank) {
-  if (rank === 1) return 'Use first'
+  if (rank === 1) return 'First Out'
   if (rank === 2) return '2nd'
   if (rank === 3) return '3rd'
   return `${rank}th`
@@ -571,7 +571,7 @@ function openTransferModal(item) {
           <span class="exp-pill exp-yellow">61–90 days</span>
           <span class="exp-pill exp-ok">&gt; 90 days</span>
           <span class="rank-tag first" style="margin-left:10px;">Use first</span>
-          <span style="font-size:11px;color:var(--c2);">= nearest expiry among items with the same name</span>
+          <span style="font-size:11px;color:var(--c2);">= first out (soonest expiry for that item name), then 2nd, 3rd…</span>
         </div>
 
         <!-- INVENTORY TABLE -->
