@@ -19,6 +19,9 @@ const DISPENSER_OPTIONS = [
   'CRISTEL ANN B. CASTRO',
 ]
 
+/* FEFO: set to true to block picking a lot when an earlier-expiring lot still has stock */
+const STRICT_FEFO = false
+
 /* Use props if given, otherwise fall back to the Inertia page props (items / transactions) */
 const inventory = computed(() => (props.items?.length ? props.items : (page.props.items || [])))
 const txns = computed(() => (props.transactions?.length ? props.transactions : (page.props.transactions || [])))
@@ -28,6 +31,7 @@ const nameInput = ref(null)
 const search = ref('')
 const open = ref(false)
 const clientError = ref('')
+const fefoNotice = ref('')
 
 const form = useForm({
   // Patient details
@@ -75,11 +79,29 @@ function formatExp(exp) {
   })
 }
 
-/* ── searchable item list ── */
+/* ── FEFO helpers ── */
+const itemKey = (i) => String(i.name || '').trim().toLowerCase().replace(/\s+/g, ' ')
+const expTime = (i) => (i.exp ? new Date(i.exp).getTime() : Infinity)
+
+/* earliest-expiring usable lot per product (not expired, has stock, not already picked) */
+const fefoFirst = computed(() => {
+  const picked = new Set(form.items.map((l) => l.item_id))
+  const best = new Map()
+  inventory.value.forEach((i) => {
+    if (i.archived || picked.has(i.id) || isExpired(i)) return
+    if ((stockMap.value.get(Number(i.id)) ?? 0) <= 0) return
+    const key = itemKey(i)
+    const cur = best.get(key)
+    if (!cur || expTime(i) < expTime(cur)) best.set(key, i)
+  })
+  return best
+})
+
+/* ── searchable item list (sorted FEFO within the same product) ── */
 const options = computed(() => {
   const s = search.value.trim().toLowerCase()
   const picked = new Set(form.items.map((l) => l.item_id))
-  return inventory.value
+  const rows = inventory.value
     .filter((i) => !i.archived && !picked.has(i.id))
     .filter((i) => !s
       || (i.name || '').toLowerCase().includes(s)
@@ -90,9 +112,34 @@ const options = computed(() => {
     .map((i) => {
       const stock = stockMap.value.get(Number(i.id)) ?? 0
       const expired = isExpired(i)
-      return { item: i, stock, expired, disabled: expired || stock <= 0 }
+      const first = fefoFirst.value.get(itemKey(i))
+      const isFirst = !!first && first.id === i.id && !expired && stock > 0
+      const earlier = first && first.id !== i.id && expTime(first) < expTime(i) ? first : null
+      return {
+        item: i, stock, expired, isFirst, earlier,
+        disabled: expired || stock <= 0 || (STRICT_FEFO && !!earlier),
+      }
     })
-    .sort((a, b) => Number(a.disabled) - Number(b.disabled) || (a.item.name || '').localeCompare(b.item.name || ''))
+
+  /* one row per product: keep only the first-out lot (earliest expiry that is usable).
+     Once it is added or runs out, the next lot automatically takes its place. */
+  const byProduct = new Map()
+  rows.forEach((o) => {
+    const key = itemKey(o.item)
+    const cur = byProduct.get(key)
+    const usable = !o.expired && o.stock > 0
+    const curUsable = !!cur && !cur.expired && cur.stock > 0
+    if (!cur
+      || (usable && !curUsable)
+      || (usable === curUsable && expTime(o.item) < expTime(cur.item))) {
+      byProduct.set(key, o)
+    }
+  })
+  return [...byProduct.values()]
+    .sort((a, b) =>
+      Number(a.disabled) - Number(b.disabled)
+      || (a.item.name || '').localeCompare(b.item.name || '')
+      || expTime(a.item) - expTime(b.item))
     .slice(0, 50)
 })
 
@@ -109,6 +156,9 @@ function addItem(o) {
     stock: o.stock,
     qty: 1,
   })
+  fefoNotice.value = o.earlier
+    ? `"${o.item.name}" Lot ${o.earlier.lot || '—'} expires earlier (${formatExp(o.earlier.exp)}). Consider dispensing it first.`
+    : ''
   search.value = ''
   clientError.value = ''
 }
@@ -120,6 +170,7 @@ function addFirst() {
 
 function removeLine(idx) {
   form.items.splice(idx, 1)
+  fefoNotice.value = ''
 }
 
 const totalQty = computed(() => form.items.reduce((s, l) => s + (Number(l.qty) || 0), 0))
@@ -162,6 +213,7 @@ watch(() => props.show, async (v) => {
     search.value = ''
     open.value = false
     clientError.value = ''
+    fefoNotice.value = ''
     if (props.dispense) fillFromRecord(props.dispense)
     await nextTick()
     nameInput.value?.focus()
@@ -293,7 +345,11 @@ function submit() {
               </div>
               <span v-if="o.expired" class="dm-tag bad">Expired</span>
               <span v-else-if="o.stock <= 0" class="dm-tag bad">Out of stock</span>
-              <span v-else class="dm-tag ok">{{ o.stock }} {{ o.item.unit || 'pcs' }}</span>
+              <span v-else-if="STRICT_FEFO && o.earlier" class="dm-tag warn">Use earlier lot</span>
+              <template v-else>
+                <span v-if="o.isFirst" class="dm-tag fefo">First out</span>
+                <span class="dm-tag ok">{{ o.stock }} {{ o.item.unit || 'pcs' }}</span>
+              </template>
             </div>
           </div>
         </div>
@@ -324,6 +380,7 @@ function submit() {
 
         <small v-if="form.errors.items" class="dm-err">{{ form.errors.items }}</small>
         <small v-if="clientError" class="dm-err">{{ clientError }}</small>
+        <small v-if="fefoNotice" class="dm-warn">⚠ {{ fefoNotice }}</small>
 
         <!-- 3. DISPENSING DETAILS -->
         <div class="dm-sec"><span class="dm-num">3</span> Dispensing details</div>
@@ -381,6 +438,7 @@ function submit() {
 .dm-combo input,.dm-qty { height:34px;padding:0 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit;background:#fff;color:#0f172a; }
 .dm-f input:focus,.dm-f select:focus,.dm-combo input:focus,.dm-qty:focus { outline:none;border-color:#1e40af;box-shadow:0 0 0 3px rgba(30,64,175,.1); }
 .dm-f small,.dm-err { color:#991b1b;font-size:11px;display:block;margin-top:4px; }
+.dm-warn { color:#92400e;font-size:11px;display:block;margin-top:4px; }
 
 /* searchable item picker */
 .dm-combo { position:relative; }
@@ -400,6 +458,9 @@ function submit() {
 .dm-tag { font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap; }
 .dm-tag.ok { background:#dcfce7;color:#166534; }
 .dm-tag.bad { background:#fee2e2;color:#991b1b; }
+.dm-tag.fefo { background:#dbeafe;color:#1e40af; }
+.dm-tag.warn { background:#fef3c7;color:#92400e; }
+.dm-opt > .dm-tag + .dm-tag { margin-left:-4px; }
 
 /* selected lines */
 .dm-empty { margin-top:10px;padding:14px;border:1px dashed #cbd5e1;border-radius:8px;text-align:center;color:#94a3b8;font-size:12px; }
